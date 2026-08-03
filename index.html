@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Time &amp; Motion Tracker</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="wordmark">orica</span> <span class="product">Time &amp; Motion Tracker</span></div>
+</div>
+
+<div class="wrap" style="max-width:480px;">
+
+  <!-- ============ BRANDED HERO ============ -->
+  <div class="login-hero" id="loginHero">
+    <div class="hero-inner">
+      <span class="wordmark">orica</span>
+      <h1>Time &amp; Motion Tracker</h1>
+      <p>Field-ready cycle studies for Technical Services teams</p>
+    </div>
+  </div>
+
+  <!-- ============ LOGIN / SIGNUP CARD ============ -->
+  <div id="authCard" class="card">
+    <div class="tabs">
+      <div class="tab active" id="tabSignIn" onclick="switchTab('signin')">Sign in</div>
+      <div class="tab" id="tabSignUp" onclick="switchTab('signup')">Create account</div>
+    </div>
+
+    <div id="errorBox" class="error-box hidden"></div>
+
+    <!-- Sign in -->
+    <div id="signinForm">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="siEmail" placeholder="you@orica.com">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="siPassword" placeholder="••••••••">
+      </div>
+      <button class="block" onclick="doSignIn()">Sign in</button>
+    </div>
+
+    <!-- Sign up -->
+    <div id="signupForm" class="hidden">
+      <div class="field">
+        <label>Display name (shown to teammates)</label>
+        <input type="text" id="suName" placeholder="e.g. Daniel G">
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="suEmail" placeholder="you@orica.com">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="suPassword" placeholder="min 6 characters">
+      </div>
+      <button class="block" onclick="doSignUp()">Create account</button>
+    </div>
+  </div>
+
+  <!-- ============ PROJECT LIST (shown once logged in) ============ -->
+  <div id="projectsCard" class="card hidden">
+    <div class="row between">
+      <h2 class="mb0">Your projects</h2>
+      <button class="small" onclick="openNewProjectModal()">+ New project</button>
+    </div>
+    <p class="muted" style="font-size:13px;">Only projects you've been added to appear here — everything is private.</p>
+    <div id="projectList" class="grid cols-2 mt16"></div>
+  </div>
+
+  <!-- ============ NEW PROJECT MODAL (simple inline card) ============ -->
+  <div id="newProjectCard" class="card hidden">
+    <h2>Create a new project</h2>
+    <div class="field">
+      <label>Project name</label>
+      <input type="text" id="npName" placeholder="e.g. Moolarben Blast Crew — Loading Study">
+    </div>
+    <div class="field">
+      <label>Description (optional)</label>
+      <textarea id="npDesc" placeholder="Purpose, site, scope..."></textarea>
+    </div>
+    <div class="row">
+      <button onclick="createProject()">Create</button>
+      <button class="secondary" onclick="closeNewProjectModal()">Cancel</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function switchTab(tab) {
+  document.getElementById("tabSignIn").classList.toggle("active", tab === "signin");
+  document.getElementById("tabSignUp").classList.toggle("active", tab === "signup");
+  document.getElementById("signinForm").classList.toggle("hidden", tab !== "signin");
+  document.getElementById("signupForm").classList.toggle("hidden", tab !== "signup");
+  hideError();
+}
+function showError(msg) {
+  const box = document.getElementById("errorBox");
+  box.textContent = msg;
+  box.classList.remove("hidden");
+}
+function hideError() {
+  document.getElementById("errorBox").classList.add("hidden");
+}
+
+async function doSignIn() {
+  hideError();
+  const email = document.getElementById("siEmail").value.trim();
+  const password = document.getElementById("siPassword").value;
+  if (!email || !password) return showError("Enter your email and password.");
+  const { error } = await signIn(email, password);
+  if (error) return showError(error.message);
+  await init();
+}
+
+async function doSignUp() {
+  hideError();
+  const name = document.getElementById("suName").value.trim();
+  const email = document.getElementById("suEmail").value.trim();
+  const password = document.getElementById("suPassword").value;
+  if (!name || !email || !password) return showError("Fill in all fields.");
+  if (password.length < 6) return showError("Password must be at least 6 characters.");
+  const { error } = await signUp(email, password, name);
+  if (error) return showError(error.message);
+  toast("Account created! Signing you in...");
+  const { error: siErr } = await signIn(email, password);
+  if (siErr) {
+    showError("Account created — please check your email to confirm, then sign in.");
+    switchTab("signin");
+    return;
+  }
+  await init();
+}
+
+function openNewProjectModal() {
+  document.getElementById("newProjectCard").classList.remove("hidden");
+}
+function closeNewProjectModal() {
+  document.getElementById("newProjectCard").classList.add("hidden");
+}
+
+async function createProject() {
+  const name = document.getElementById("npName").value.trim();
+  const desc = document.getElementById("npDesc").value.trim();
+  if (!name) return toast("Enter a project name", "error");
+  const user = await getCurrentUser();
+  const { data, error } = await sb
+    .from("projects")
+    .insert({ name, description: desc, owner_id: user.id })
+    .select()
+    .single();
+  if (error) return toast(error.message, "error");
+  toast("Project created!");
+  window.location.href = `project.html?project=${data.id}`;
+}
+
+async function loadProjects() {
+  const { data, error } = await sb
+    .from("projects")
+    .select("*, project_members!inner(user_id)")
+    .order("created_at", { ascending: false });
+  const list = document.getElementById("projectList");
+  if (error) {
+    list.innerHTML = `<p class="error-box">${error.message}</p>`;
+    return;
+  }
+  if (!data.length) {
+    list.innerHTML = `<p class="muted">No projects yet — create your first one above.</p>`;
+    return;
+  }
+  list.innerHTML = data
+    .map(
+      (p) => `
+    <div class="project-tile" onclick="window.location.href='project.html?project=${p.id}'">
+      <h3>${escapeHtml(p.name)}</h3>
+      <p>${escapeHtml(p.description || "No description")}</p>
+      <p class="mt8">Created ${fmtDate(p.created_at)}</p>
+    </div>`
+    )
+    .join("");
+}
+
+async function init() {
+  const user = await getCurrentUser();
+  if (user) {
+    document.getElementById("loginHero").classList.add("hidden");
+    document.getElementById("authCard").classList.add("hidden");
+    document.getElementById("projectsCard").classList.remove("hidden");
+    await loadProjects();
+  } else {
+    document.getElementById("loginHero").classList.remove("hidden");
+    document.getElementById("authCard").classList.remove("hidden");
+    document.getElementById("projectsCard").classList.add("hidden");
+  }
+}
+init();
+</script>
+</body>
+</html>

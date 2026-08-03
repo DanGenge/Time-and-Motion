@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Tracker — Time &amp; Motion Tracker</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/presence.js"></script>
+</head>
+<body>
+
+<div id="topbar-container"></div>
+
+<div class="wrap">
+
+  <!-- Run info -->
+  <div class="card">
+    <div class="row between">
+      <div>
+        <h2 class="mb0" id="runName">Loading run...</h2>
+        <p class="muted" id="runMeta" style="margin:4px 0 0;"></p>
+      </div>
+      <div style="text-align:right;">
+        <div class="row" style="justify-content:flex-end;">
+          <span class="sync-indicator"><span class="dot"></span> <span id="syncTime">syncing…</span></span>
+          <button class="small secondary" onclick="syncNow()">🔄 Sync now</button>
+        </div>
+        <div class="row mt8" style="justify-content:flex-end;">
+          <span class="badge task">Cycle <span id="cycleNum">1</span></span>
+          <button class="small" onclick="newCycle()">+ New cycle</button>
+          <button class="small warn" onclick="completeRun()" id="completeBtn">Complete run</button>
+        </div>
+      </div>
+    </div>
+    <div class="row mt16">
+      <strong style="font-size:12px;color:var(--muted);">ONLINE NOW:</strong>
+      <div class="presence-bar" id="presenceBar"></div>
+    </div>
+  </div>
+
+  <!-- Step cards -->
+  <div class="grid cols-2" id="stepGrid"></div>
+
+  <!-- Recent activity feed -->
+  <div class="card">
+    <h3>Recent activity (all users)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Step</th><th>Type</th><th>Cycle</th><th>By</th><th>Duration</th><th>Method</th></tr></thead>
+        <tbody id="feedBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let PROJECT_ID = getParam("project");
+let RUN_ID = getParam("run");
+let CURRENT_USER = null;
+let STEPS = [];
+let CYCLE = 1;
+let timers = {}; // stepId -> { running: bool, startTs: number, intervalId }
+let lastEntryByStep = {}; // stepId -> latest entry summary text
+
+async function boot() {
+  if (!PROJECT_ID || !RUN_ID) { window.location.href = "index.html"; return; }
+  CURRENT_USER = await requireAuth();
+  if (!CURRENT_USER) return;
+  await renderTopbar("tracker", CURRENT_USER);
+  await loadRun();
+  await loadSteps();
+  startPresence(PROJECT_ID, CURRENT_USER, (users) => renderPresenceBar("presenceBar", users));
+  await syncNow();
+  setInterval(syncNow, window.APP_CONFIG.AUTO_REFRESH_MS || 5000);
+}
+
+async function loadRun() {
+  const { data, error } = await sb.from("study_runs").select("*").eq("id", RUN_ID).single();
+  if (error) { toast("Could not load run", "error"); return; }
+  document.getElementById("runName").textContent = data.run_name;
+  document.getElementById("runMeta").textContent =
+    `${data.location||''} ${data.equipment ? '· '+data.equipment : ''} · started ${fmtDateTime(data.started_at)} by ${data.started_by_name||''}`;
+  document.getElementById("completeBtn").disabled = data.status === "completed";
+  if (data.status === "completed") document.getElementById("completeBtn").textContent = "Run completed";
+}
+
+async function loadSteps() {
+  const { data, error } = await sb.from("step_templates")
+    .select("*").eq("project_id", PROJECT_ID).eq("is_active", true).order("sort_order");
+  if (error) { toast(error.message, "error"); return; }
+  STEPS = data;
+  if (!STEPS.length) {
+    document.getElementById("stepGrid").innerHTML = `<div class="card"><p class="muted">No active step templates for this project yet. Go to <a href="templates.html?project=${PROJECT_ID}">Templates</a> to add tasks, delays and breaks.</p></div>`;
+    return;
+  }
+  renderStepGrid();
+}
+
+function renderStepGrid() {
+  const grid = document.getElementById("stepGrid");
+  grid.innerHTML = STEPS.map(s => `
+    <div class="step-card" id="card-${s.id}">
+      <div class="step-head">
+        <div>
+          <span class="badge ${s.step_type}">${s.step_type}</span>
+          <div class="step-name">${escapeHtml(s.name)}</div>
+          ${s.target_seconds ? `<span class="muted" style="font-size:11px;">target ${fmtDuration(s.target_seconds)}</span>` : ""}
+        </div>
+      </div>
+      <div class="step-timer" id="timer-${s.id}">00:00</div>
+      <div class="step-actions">
+        <button id="btn-${s.id}" onclick="toggleStopwatch('${s.id}')">▶ Start</button>
+        <button class="secondary" onclick="skipStep('${s.id}')">⏭ Skip</button>
+        <button class="secondary" onclick="toggleManual('${s.id}')">✍ Manual</button>
+      </div>
+      <div class="manual-entry" id="manual-${s.id}">
+        <input type="text" id="manualInput-${s.id}" placeholder="e.g. 1:45 or 105 (sec)">
+        <button class="small" onclick="saveManual('${s.id}')">Save</button>
+      </div>
+      <div class="last-entries" id="last-${s.id}">No entries yet this run.</div>
+    </div>
+  `).join("");
+}
+
+function toggleManual(stepId) {
+  document.getElementById(`manual-${stepId}`).classList.toggle("open");
+}
+
+async function saveManual(stepId) {
+  const val = document.getElementById(`manualInput-${stepId}`).value;
+  const seconds = parseDurationInput(val);
+  if (seconds == null || seconds < 0) return toast("Enter a valid time, e.g. 1:45 or 105", "error");
+  const step = STEPS.find(s => s.id === stepId);
+  await saveEntry(step, { duration_seconds: seconds, entry_method: "manual" });
+  document.getElementById(`manualInput-${stepId}`).value = "";
+  document.getElementById(`manual-${stepId}`).classList.remove("open");
+}
+
+function toggleStopwatch(stepId) {
+  const t = timers[stepId];
+  if (t && t.running) {
+    stopStopwatch(stepId);
+  } else {
+    startStopwatch(stepId);
+  }
+}
+
+function startStopwatch(stepId) {
+  const startTs = Date.now();
+  timers[stepId] = { running: true, startTs };
+  const btn = document.getElementById(`btn-${stepId}`);
+  btn.textContent = "⏸ Stop";
+  btn.classList.add("danger");
+  document.getElementById(`card-${stepId}`).classList.add("running");
+  timers[stepId].intervalId = setInterval(() => {
+    const elapsed = (Date.now() - startTs) / 1000;
+    document.getElementById(`timer-${stepId}`).textContent = fmtDuration(elapsed);
+  }, 200);
+}
+
+async function stopStopwatch(stepId) {
+  const t = timers[stepId];
+  if (!t) return;
+  clearInterval(t.intervalId);
+  const durationSeconds = (Date.now() - t.startTs) / 1000;
+  const startIso = new Date(t.startTs).toISOString();
+  const endIso = new Date().toISOString();
+  timers[stepId] = { running: false };
+  const btn = document.getElementById(`btn-${stepId}`);
+  btn.textContent = "▶ Start";
+  btn.classList.remove("danger");
+  document.getElementById(`card-${stepId}`).classList.remove("running");
+  document.getElementById(`timer-${stepId}`).textContent = "00:00";
+  const step = STEPS.find(s => s.id === stepId);
+  await saveEntry(step, {
+    duration_seconds: durationSeconds,
+    entry_method: "stopwatch",
+    start_time: startIso,
+    end_time: endIso
+  });
+}
+
+async function skipStep(stepId) {
+  const step = STEPS.find(s => s.id === stepId);
+  await saveEntry(step, { duration_seconds: 0, entry_method: "skip", skipped: true });
+}
+
+async function saveEntry(step, extra) {
+  const now = new Date().toISOString();
+  const payload = {
+    run_id: RUN_ID,
+    project_id: PROJECT_ID,
+    step_template_id: step.id,
+    step_name: step.name,
+    step_type: step.step_type,
+    cycle_number: CYCLE,
+    recorded_by: CURRENT_USER.id,
+    recorded_by_name: CURRENT_USER.display_name,
+    start_time: extra.start_time || now,
+    end_time: extra.end_time || now,
+    duration_seconds: extra.duration_seconds,
+    entry_method: extra.entry_method,
+    skipped: extra.skipped || false
+  };
+  const { error } = await sb.from("entries").insert(payload);
+  if (error) return toast(error.message, "error");
+  toast(`${step.name}: ${extra.entry_method === 'skip' ? 'skipped' : fmtDuration(extra.duration_seconds)} saved`);
+  syncNow();
+}
+
+function newCycle() {
+  const anyRunning = Object.values(timers).some(t => t?.running);
+  if (anyRunning) return toast("Stop the current stopwatch before starting a new cycle", "error");
+  CYCLE += 1;
+  document.getElementById("cycleNum").textContent = CYCLE;
+  toast(`Cycle ${CYCLE} started`);
+}
+
+async function completeRun() {
+  if (!confirm("Mark this run as completed? You can still view its data afterwards.")) return;
+  await sb.from("study_runs").update({ status: "completed", ended_at: new Date().toISOString() }).eq("id", RUN_ID);
+  toast("Run marked as completed");
+  loadRun();
+}
+
+async function syncNow() {
+  const { data, error } = await sb.from("entries")
+    .select("*").eq("run_id", RUN_ID).order("created_at", { ascending: false }).limit(50);
+  if (error) return;
+  document.getElementById("syncTime").textContent = "synced " + new Date().toLocaleTimeString("en-AU");
+
+  // Update "last entry" text per step card
+  STEPS.forEach(s => {
+    const last = data.find(e => e.step_template_id === s.id);
+    const el = document.getElementById(`last-${s.id}`);
+    if (el) {
+      el.textContent = last
+        ? `Last: ${last.skipped ? 'skipped' : fmtDuration(last.duration_seconds)} by ${last.recorded_by_name || '?'} (cycle ${last.cycle_number}) · ${fmtDateTime(last.created_at)}`
+        : "No entries yet this run.";
+    }
+  });
+
+  // Update feed table
+  document.getElementById("feedBody").innerHTML = data.map(e => `
+    <tr>
+      <td>${fmtDateTime(e.created_at)}</td>
+      <td>${escapeHtml(e.step_name)}</td>
+      <td><span class="badge ${e.step_type}">${e.step_type}</span></td>
+      <td>${e.cycle_number}</td>
+      <td>${escapeHtml(e.recorded_by_name||'')}</td>
+      <td>${e.skipped ? '<span class="muted">skipped</span>' : fmtDuration(e.duration_seconds)}</td>
+      <td>${e.entry_method}</td>
+    </tr>`).join("");
+}
+
+boot();
+</script>
+</body>
+</html>

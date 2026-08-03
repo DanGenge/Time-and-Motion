@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Export — Time &amp; Motion Tracker</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+</head>
+<body>
+
+<div id="topbar-container"></div>
+
+<div class="wrap">
+
+  <div class="card">
+    <h2>Export data</h2>
+    <p class="muted">Export the full granular dataset for further analysis in Excel, Power BI, or anywhere else. Every recorded entry is included — no aggregation, nothing hidden.</p>
+  </div>
+
+  <div class="card">
+    <h3>Filters (optional — leave blank to export everything)</h3>
+    <div class="grid cols-3">
+      <div class="field"><label>Runs</label><select id="fRuns" multiple size="4"></select></div>
+      <div class="field"><label>Users</label><select id="fUsers" multiple size="4"></select></div>
+      <div class="field"><label>Type</label>
+        <select id="fType"><option value="">All</option><option value="task">Task</option><option value="delay">Delay</option><option value="break">Break</option></select>
+      </div>
+      <div class="field"><label>From date</label><input type="date" id="fFrom"></div>
+      <div class="field"><label>To date</label><input type="date" id="fTo"></div>
+    </div>
+    <button onclick="loadPreview()">Preview matching data</button>
+    <span class="muted" id="previewSummary" style="margin-left:10px;font-size:12px;"></span>
+  </div>
+
+  <div class="card">
+    <h3>Export options</h3>
+    <div class="row">
+      <button onclick="exportGranular()">⬇️ Granular entries CSV (every recorded data point)</button>
+      <button class="secondary" onclick="exportSummary()">⬇️ Per-step summary CSV</button>
+      <button class="secondary" onclick="exportRuns()">⬇️ Runs list CSV</button>
+      <button class="secondary" onclick="exportTemplates()">⬇️ Step templates CSV</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Preview (first 100 rows)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Run</th><th>Cycle</th><th>Step</th><th>Type</th><th>User</th><th>Start</th><th>End</th><th>Duration (s)</th><th>Method</th><th>Skipped</th></tr></thead>
+        <tbody id="previewBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let PROJECT_ID = getParam("project");
+let FILTERED = [];
+let RUNS = [];
+
+async function boot() {
+  if (!PROJECT_ID) { window.location.href = "index.html"; return; }
+  const user = await requireAuth();
+  if (!user) return;
+  await renderTopbar("export", user);
+  await loadFilterOptions();
+  await loadPreview();
+}
+
+async function loadFilterOptions() {
+  const { data: runs } = await sb.from("study_runs").select("id, run_name").eq("project_id", PROJECT_ID).order("started_at", { ascending: false });
+  RUNS = runs || [];
+  document.getElementById("fRuns").innerHTML = RUNS.map(r => `<option value="${r.id}">${escapeHtml(r.run_name)}</option>`).join("");
+  const { data: entries } = await sb.from("entries").select("recorded_by_name").eq("project_id", PROJECT_ID);
+  const users = [...new Set((entries||[]).map(e => e.recorded_by_name).filter(Boolean))];
+  document.getElementById("fUsers").innerHTML = users.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join("");
+}
+
+function selectedValues(id) {
+  return Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
+}
+
+async function loadPreview() {
+  const runs = selectedValues("fRuns");
+  const users = selectedValues("fUsers");
+  const type = document.getElementById("fType").value;
+  const from = document.getElementById("fFrom").value;
+  const to = document.getElementById("fTo").value;
+
+  let query = sb.from("entries").select("*, study_runs(run_name)").eq("project_id", PROJECT_ID).order("created_at", { ascending: true });
+  if (runs.length) query = query.in("run_id", runs);
+  if (type) query = query.eq("step_type", type);
+  if (from) query = query.gte("created_at", from);
+  if (to) query = query.lte("created_at", to + "T23:59:59");
+
+  const { data, error } = await query;
+  if (error) return toast(error.message, "error");
+  FILTERED = (data||[])
+    .map(e => ({ ...e, run_name: e.study_runs?.run_name || "" }))
+    .filter(e => !users.length || users.includes(e.recorded_by_name));
+
+  document.getElementById("previewSummary").textContent = `${FILTERED.length} entries match your filters`;
+  document.getElementById("previewBody").innerHTML = FILTERED.slice(0,100).map(e => `
+    <tr>
+      <td>${escapeHtml(e.run_name)}</td>
+      <td>${e.cycle_number}</td>
+      <td>${escapeHtml(e.step_name)}</td>
+      <td><span class="badge ${e.step_type}">${e.step_type}</span></td>
+      <td>${escapeHtml(e.recorded_by_name||'')}</td>
+      <td>${fmtDateTime(e.start_time)}</td>
+      <td>${fmtDateTime(e.end_time)}</td>
+      <td>${e.duration_seconds}</td>
+      <td>${e.entry_method}</td>
+      <td>${e.skipped ? "Yes":"No"}</td>
+    </tr>`).join("");
+}
+
+function exportGranular() {
+  if (!FILTERED.length) return toast("No data to export — adjust filters and preview first.", "error");
+  const csv = toCSV(FILTERED, [
+    { label: "Project ID", value: "project_id" },
+    { label: "Run", value: "run_name" },
+    { label: "Run ID", value: "run_id" },
+    { label: "Cycle", value: "cycle_number" },
+    { label: "Step", value: "step_name" },
+    { label: "Step Type", value: "step_type" },
+    { label: "Recorded By", value: "recorded_by_name" },
+    { label: "Start Time", value: "start_time" },
+    { label: "End Time", value: "end_time" },
+    { label: "Duration (seconds)", value: "duration_seconds" },
+    { label: "Entry Method", value: "entry_method" },
+    { label: "Skipped", value: (r) => r.skipped ? "Yes" : "No" },
+    { label: "Notes", value: "notes" },
+    { label: "Recorded At", value: "created_at" }
+  ]);
+  downloadFile(`timemotion_entries_${Date.now()}.csv`, csv);
+}
+
+async function exportSummary() {
+  const { data: templates } = await sb.from("step_templates").select("*").eq("project_id", PROJECT_ID);
+  const byStep = {};
+  FILTERED.forEach(e => {
+    const key = e.step_name;
+    byStep[key] = byStep[key] || { name: e.step_name, type: e.step_type, durations: [], skips: 0, count: 0 };
+    if (e.skipped) byStep[key].skips++; else byStep[key].durations.push(e.duration_seconds||0);
+    byStep[key].count++;
+  });
+  const rows = Object.values(byStep).map(s => {
+    const tmpl = (templates||[]).find(t => t.name === s.name);
+    const avg = s.durations.length ? s.durations.reduce((a,b)=>a+b,0)/s.durations.length : "";
+    const total = s.durations.reduce((a,b)=>a+b,0);
+    return { name: s.name, type: s.type, count: s.count, avg, min: s.durations.length?Math.min(...s.durations):"", max: s.durations.length?Math.max(...s.durations):"", total, target: tmpl?.target_seconds||"", skips: s.skips };
+  });
+  const csv = toCSV(rows, [
+    { label: "Step", value: "name" }, { label: "Type", value: "type" }, { label: "Count", value: "count" },
+    { label: "Avg (s)", value: "avg" }, { label: "Min (s)", value: "min" }, { label: "Max (s)", value: "max" },
+    { label: "Total (s)", value: "total" }, { label: "Target (s)", value: "target" }, { label: "Skips", value: "skips" }
+  ]);
+  downloadFile(`timemotion_summary_${Date.now()}.csv`, csv);
+}
+
+async function exportRuns() {
+  const { data } = await sb.from("study_runs").select("*").eq("project_id", PROJECT_ID);
+  const csv = toCSV(data||[], [
+    { label: "Run", value: "run_name" }, { label: "Location", value: "location" }, { label: "Equipment", value: "equipment" },
+    { label: "Started By", value: "started_by_name" }, { label: "Started At", value: "started_at" },
+    { label: "Ended At", value: "ended_at" }, { label: "Status", value: "status" }
+  ]);
+  downloadFile(`timemotion_runs_${Date.now()}.csv`, csv);
+}
+
+async function exportTemplates() {
+  const { data } = await sb.from("step_templates").select("*").eq("project_id", PROJECT_ID).order("sort_order");
+  const csv = toCSV(data||[], [
+    { label: "Step", value: "name" }, { label: "Type", value: "step_type" }, { label: "Category", value: "category" },
+    { label: "Target (s)", value: "target_seconds" }, { label: "Active", value: (r)=>r.is_active?"Yes":"No" }, { label: "Order", value: "sort_order" }
+  ]);
+  downloadFile(`timemotion_templates_${Date.now()}.csv`, csv);
+}
+
+boot();
+</script>
+</body>
+</html>

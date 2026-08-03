@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Project — Time &amp; Motion Tracker</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+</head>
+<body>
+
+<div id="topbar-container"></div>
+
+<div class="wrap">
+
+  <div class="card">
+    <div class="row between">
+      <h2 id="projName" class="mb0">Loading project...</h2>
+      <span class="badge online" id="memberCount"></span>
+    </div>
+    <p class="muted" id="projDesc"></p>
+  </div>
+
+  <div class="grid cols-2">
+
+    <!-- ===== Study runs ===== -->
+    <div class="card">
+      <div class="row between">
+        <h3>Observation runs</h3>
+        <button class="small" onclick="openNewRun()">+ New run</button>
+      </div>
+      <div id="newRunForm" class="hidden mt8">
+        <div class="field"><label>Run name</label><input id="rnName" placeholder="e.g. Day shift 03 Aug — Truck 14"></div>
+        <div class="field"><label>Location</label><input id="rnLocation" placeholder="e.g. Moolarben Pit 3"></div>
+        <div class="field"><label>Equipment / asset</label><input id="rnEquip" placeholder="e.g. CAT 785 #14"></div>
+        <div class="row">
+          <button onclick="createRun()">Start run</button>
+          <button class="secondary" onclick="closeNewRun()">Cancel</button>
+        </div>
+      </div>
+      <div id="runList" class="mt16"></div>
+    </div>
+
+    <!-- ===== Members ===== -->
+    <div class="card">
+      <h3>Project members</h3>
+      <div id="memberList"></div>
+      <div class="row mt16">
+        <input id="inviteEmail" placeholder="teammate@orica.com" style="flex:2;">
+        <button class="small" onclick="addMember()">Add</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:6px;">They must already have a Time &amp; Motion Tracker account (ask them to sign up first).</p>
+    </div>
+
+  </div>
+
+  <!-- ===== Quick links ===== -->
+  <div class="card">
+    <h3>Quick links</h3>
+    <div class="row">
+      <a class="btn" href="templates.html" id="lnkTemplates" style="text-decoration:none;">📋 Manage step templates</a>
+      <a class="btn secondary" href="reports.html" id="lnkReports" style="text-decoration:none;">📊 Reports &amp; comparisons</a>
+      <a class="btn secondary" href="export.html" id="lnkExport" style="text-decoration:none;">⬇️ Export data</a>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let PROJECT_ID = getParam("project");
+let CURRENT_USER = null;
+
+async function boot() {
+  if (!PROJECT_ID) { window.location.href = "index.html"; return; }
+  CURRENT_USER = await requireAuth();
+  if (!CURRENT_USER) return;
+  await renderTopbar("project", CURRENT_USER);
+  ["lnkTemplates","lnkReports","lnkExport"].forEach(id=>{
+    document.getElementById(id).href = document.getElementById(id).href.split("?")[0] + `?project=${PROJECT_ID}`;
+  });
+  await loadProject();
+  await loadMembers();
+  await loadRuns();
+}
+
+async function loadProject() {
+  const { data, error } = await sb.from("projects").select("*").eq("id", PROJECT_ID).single();
+  if (error) { toast("Could not load project — you may not have access.", "error"); return; }
+  document.getElementById("projName").textContent = data.name;
+  document.getElementById("projDesc").textContent = data.description || "";
+}
+
+async function loadMembers() {
+  const { data, error } = await sb
+    .from("project_members")
+    .select("role, user_id, profiles(display_name, email)")
+    .eq("project_id", PROJECT_ID);
+  if (error) return;
+  document.getElementById("memberCount").textContent = `${data.length} member${data.length===1?"":"s"}`;
+  document.getElementById("memberList").innerHTML = data.map(m => `
+    <div class="row between" style="padding:6px 0;border-bottom:1px solid var(--border);">
+      <span>${escapeHtml(m.profiles?.display_name || "Unknown")} <span class="muted">(${m.role})</span></span>
+    </div>`).join("");
+}
+
+async function addMember() {
+  const email = document.getElementById("inviteEmail").value.trim();
+  if (!email) return;
+  const { data: profile, error: pErr } = await sb.from("profiles").select("id").eq("email", email).maybeSingle();
+  if (pErr || !profile) return toast("No account found with that email — ask them to sign up first.", "error");
+  const { error } = await sb.from("project_members").insert({ project_id: PROJECT_ID, user_id: profile.id, role: "member" });
+  if (error) return toast(error.message.includes("duplicate") ? "Already a member." : error.message, "error");
+  toast("Member added!");
+  document.getElementById("inviteEmail").value = "";
+  loadMembers();
+}
+
+function openNewRun(){ document.getElementById("newRunForm").classList.remove("hidden"); }
+function closeNewRun(){ document.getElementById("newRunForm").classList.add("hidden"); }
+
+async function createRun() {
+  const run_name = document.getElementById("rnName").value.trim();
+  const location = document.getElementById("rnLocation").value.trim();
+  const equipment = document.getElementById("rnEquip").value.trim();
+  if (!run_name) return toast("Give the run a name", "error");
+  const { data, error } = await sb.from("study_runs").insert({
+    project_id: PROJECT_ID, run_name, location, equipment,
+    started_by: CURRENT_USER.id, started_by_name: CURRENT_USER.display_name
+  }).select().single();
+  if (error) return toast(error.message, "error");
+  window.location.href = `tracker.html?project=${PROJECT_ID}&run=${data.id}`;
+}
+
+async function loadRuns() {
+  const { data, error } = await sb.from("study_runs").select("*").eq("project_id", PROJECT_ID).order("started_at", { ascending: false });
+  if (error) return;
+  const list = document.getElementById("runList");
+  if (!data.length) { list.innerHTML = `<p class="muted">No runs yet — start one above.</p>`; return; }
+  list.innerHTML = data.map(r => `
+    <div class="row between" style="padding:10px 0;border-bottom:1px solid var(--border);">
+      <div>
+        <div style="font-weight:600;">${escapeHtml(r.run_name)} ${r.status==='active' ? '<span class="badge online">active</span>' : ''}</div>
+        <div class="muted" style="font-size:12px;">${escapeHtml(r.location||'')} ${r.equipment? '· '+escapeHtml(r.equipment):''} · started ${fmtDateTime(r.started_at)} by ${escapeHtml(r.started_by_name||'')}</div>
+      </div>
+      <button class="small" onclick="window.location.href='tracker.html?project=${PROJECT_ID}&run=${r.id}'">${r.status==='active'?'Continue':'View'} →</button>
+    </div>`).join("");
+}
+
+boot();
+</script>
+</body>
+</html>
