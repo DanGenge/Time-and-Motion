@@ -1,9 +1,8 @@
 // ============================================================
-// CONFIG — fill these in from your Supabase project
-// Supabase Dashboard -> Project Settings -> API
+// CONFIG — Orica Time & Motion Tracker
 // ============================================================
 window.APP_CONFIG = {
-  SUPABASE_URL: "YOUR_SUPABASE_PROJECT_URL",   // e.g. https://abcdefgh.supabase.co
-  SUPABASE_ANON_KEY: "YOUR_SUPABASE_ANON_KEY", // the "anon public" key, NOT the service_role key
-  AUTO_REFRESH_MS: 5000                        // auto-refresh interval for shared data (5s as requested)
+  SUPABASE_URL: "https://hrofybrybafkcbzefkli.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_Y-k7fIAaH70-ThA7xWJFFQ_5C1JcH_g",
+  AUTO_REFRESH_MS: 5000
 };
