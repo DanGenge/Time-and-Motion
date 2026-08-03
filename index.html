@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <title>Time &amp; Motion Tracker</title>
+<meta name="theme-color" content="#0093D1">
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/config.js"></script>
@@ -13,16 +14,15 @@
 </head>
 <body>
 
-<div class="topbar">
-  <div class="brand"><span class="wordmark">orica</span> <span class="product">Time &amp; Motion Tracker</span></div>
-</div>
+<!-- Top bar is rendered by JS: full nav when logged in, simple brand bar when logged out -->
+<div id="topbar-container"></div>
 
 <div class="wrap" style="max-width:480px;">
 
-  <!-- ============ BRANDED HERO ============ -->
+  <!-- ============ BRANDED HERO (login screen only) ============ -->
   <div class="login-hero" id="loginHero">
     <div class="hero-inner">
-      <span class="wordmark">orica</span>
+      <span class="brand-logo"><img src="img/orica-logo.png" alt="Orica"></span>
       <h1>Time &amp; Motion Tracker</h1>
       <p>Field-ready cycle studies for Technical Services teams</p>
     </div>
@@ -78,7 +78,7 @@
     <div id="projectList" class="grid cols-2 mt16"></div>
   </div>
 
-  <!-- ============ NEW PROJECT MODAL (simple inline card) ============ -->
+  <!-- ============ NEW PROJECT MODAL ============ -->
   <div id="newProjectCard" class="card hidden">
     <h2>Create a new project</h2>
     <div class="field">
@@ -98,6 +98,18 @@
 </div>
 
 <script>
+/** Simple brand-only bar for the logged-out login screen. */
+function renderSimpleTopbar() {
+  document.getElementById("topbar-container").innerHTML = `
+    <div class="topbar">
+      <div class="brand">
+        <span class="brand-logo"><img src="img/orica-logo.png" alt="Orica"></span>
+        <span class="product">Time &amp; Motion Tracker</span>
+      </div>
+    </div>
+    <div class="brand-accent"></div>`;
+}
+
 function switchTab(tab) {
   document.getElementById("tabSignIn").classList.toggle("active", tab === "signin");
   document.getElementById("tabSignUp").classList.toggle("active", tab === "signup");
@@ -162,6 +174,7 @@ async function createProject() {
     .single();
   if (error) return toast(error.message, "error");
   toast("Project created!");
+  setLastProject(data.id);
   window.location.href = `project.html?project=${data.id}`;
 }
 
@@ -182,7 +195,7 @@ async function loadProjects() {
   list.innerHTML = data
     .map(
       (p) => `
-    <div class="project-tile" onclick="window.location.href='project.html?project=${p.id}'">
+    <div class="project-tile" onclick="setLastProject('${p.id}');window.location.href='project.html?project=${p.id}'">
       <h3>${escapeHtml(p.name)}</h3>
       <p>${escapeHtml(p.description || "No description")}</p>
       <p class="mt8">Created ${fmtDate(p.created_at)}</p>
@@ -194,11 +207,14 @@ async function loadProjects() {
 async function init() {
   const user = await getCurrentUser();
   if (user) {
+    const { data: profile } = await sb.from("profiles").select("display_name").eq("id", user.id).single();
+    await renderTopbar("index", { display_name: profile?.display_name || user.email });
     document.getElementById("loginHero").classList.add("hidden");
     document.getElementById("authCard").classList.add("hidden");
     document.getElementById("projectsCard").classList.remove("hidden");
     await loadProjects();
   } else {
+    renderSimpleTopbar();
     document.getElementById("loginHero").classList.remove("hidden");
     document.getElementById("authCard").classList.remove("hidden");
     document.getElementById("projectsCard").classList.add("hidden");
