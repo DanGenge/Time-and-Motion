@@ -4,12 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <title>Templates — Time &amp; Motion Tracker</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta name="theme-color" content="#0093D1">
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/config.js"></script>
 <script src="js/supabaseClient.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/auth.js"></script>
+<script src="js/activityLibrary.js"></script>
 </head>
 <body>
 
@@ -18,42 +22,58 @@
 <div class="wrap">
   <div class="card">
     <div class="row between">
-      <h2 class="mb0">Step templates</h2>
-      <button class="small" onclick="openNewStep()">+ New step</button>
+      <h2 class="mb0">Step / Activity templates</h2>
+      <div class="row">
+        <button class="small secondary" onclick="seedLibrary()">⬇ Load standard MMU library</button>
+        <button class="small" onclick="openNewStep()">+ New step</button>
+      </div>
     </div>
-    <p class="muted" style="font-size:13px;">Define every task, delay and break your team will record against. Use the arrows to set the order they'll appear on the tracker.</p>
+    <p class="muted" style="font-size:13px;">Define every activity your team records against, grouped by <strong>Task · Customer delay · Orica delay · Other</strong>. Tasks can contain ordered <strong>elements</strong> (e.g. Reloading → EP Bin 1, AN Bin 1…). Use the arrows to set order.</p>
   </div>
 
+  <!-- New / edit step -->
   <div id="newStepCard" class="card hidden">
-    <h3>New / edit step</h3>
+    <h3 id="editHeading">New step</h3>
     <input type="hidden" id="editId">
     <div class="grid cols-2">
-      <div class="field"><label>Step name</label><input id="stName" placeholder="e.g. Position truck under shovel"></div>
+      <div class="field"><label>Step / activity name</label><input id="stName" placeholder="e.g. Loading Blast Holes"></div>
       <div class="field">
-        <label>Type</label>
-        <select id="stType">
-          <option value="task">Task</option>
-          <option value="delay">Delay</option>
-          <option value="break">Break</option>
+        <label>Category</label>
+        <select id="stCategory">
+          <option value="task">Task (Orica productive)</option>
+          <option value="customer">Customer Delay</option>
+          <option value="orica">Orica Delay</option>
+          <option value="other">Other</option>
         </select>
       </div>
-      <div class="field"><label>Category (optional)</label><input id="stCategory" placeholder="e.g. Loading cycle"></div>
+      <div class="field"><label>Activity code (optional)</label><input id="stCode" placeholder="e.g. 7"></div>
       <div class="field"><label>Target/standard time (seconds, optional)</label><input type="number" id="stTarget" placeholder="e.g. 90"></div>
     </div>
+
+    <div class="field">
+      <label>Elements (optional ordered sub-steps — leave blank for a simple activity)</label>
+      <div id="elementList"></div>
+      <div class="row mt8">
+        <input id="elInput" placeholder="e.g. Reloading EP Bin 1" style="flex:2;">
+        <button class="small secondary" onclick="addElementRow()">+ Add element</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:4px;">On the Tracker, an activity with elements becomes a one-tap-to-advance sequence.</p>
+    </div>
+
     <div class="row">
       <button onclick="saveStep()">Save</button>
       <button class="secondary" onclick="closeNewStep()">Cancel</button>
     </div>
   </div>
 
-  <div class="card">
-    <div id="stepList"></div>
-  </div>
+  <!-- Grouped list -->
+  <div id="groupsContainer"></div>
 </div>
 
 <script>
 let PROJECT_ID = getParam("project");
 let STEPS = [];
+let ELEMENTS_DRAFT = [];
 
 async function boot() {
   if (!PROJECT_ID) { window.location.href = "index.html"; return; }
@@ -63,84 +83,176 @@ async function boot() {
   await loadSteps();
 }
 
+// ---------- New/edit ----------
 function openNewStep(step) {
   document.getElementById("newStepCard").classList.remove("hidden");
+  document.getElementById("editHeading").textContent = step ? "Edit step" : "New step";
   document.getElementById("editId").value = step?.id || "";
   document.getElementById("stName").value = step?.name || "";
-  document.getElementById("stType").value = step?.step_type || "task";
-  document.getElementById("stCategory").value = step?.category || "";
+  document.getElementById("stCategory").value = step?.category_group || "task";
+  document.getElementById("stCode").value = step?.activity_code || "";
   document.getElementById("stTarget").value = step?.target_seconds || "";
+  // load existing child elements
+  ELEMENTS_DRAFT = step ? STEPS.filter(s => s.parent_id === step.id).sort((a,b)=>a.sort_order-b.sort_order).map(e => e.name) : [];
+  renderElementDraft();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
-function closeNewStep(){ document.getElementById("newStepCard").classList.add("hidden"); }
+function closeNewStep(){ document.getElementById("newStepCard").classList.add("hidden"); ELEMENTS_DRAFT=[]; }
+
+function addElementRow() {
+  const v = document.getElementById("elInput").value.trim();
+  if (!v) return;
+  ELEMENTS_DRAFT.push(v);
+  document.getElementById("elInput").value = "";
+  renderElementDraft();
+}
+function removeElement(i){ ELEMENTS_DRAFT.splice(i,1); renderElementDraft(); }
+function moveElement(i,d){ const j=i+d; if(j<0||j>=ELEMENTS_DRAFT.length)return; [ELEMENTS_DRAFT[i],ELEMENTS_DRAFT[j]]=[ELEMENTS_DRAFT[j],ELEMENTS_DRAFT[i]]; renderElementDraft(); }
+function renderElementDraft() {
+  const el = document.getElementById("elementList");
+  if (!ELEMENTS_DRAFT.length) { el.innerHTML = `<p class="muted" style="font-size:12px;">No elements — this will be a single-timer activity.</p>`; return; }
+  el.innerHTML = ELEMENTS_DRAFT.map((name,i)=>`
+    <div class="row between" style="padding:4px 0;border-bottom:1px solid var(--border);">
+      <span>${i+1}. ${escapeHtml(name)}</span>
+      <span class="row">
+        <button class="ghost small" onclick="moveElement(${i},-1)" ${i===0?'disabled':''}>↑</button>
+        <button class="ghost small" onclick="moveElement(${i},1)" ${i===ELEMENTS_DRAFT.length-1?'disabled':''}>↓</button>
+        <button class="danger small" onclick="removeElement(${i})">✕</button>
+      </span>
+    </div>`).join("");
+}
 
 async function saveStep() {
   const id = document.getElementById("editId").value;
   const name = document.getElementById("stName").value.trim();
-  const step_type = document.getElementById("stType").value;
-  const category = document.getElementById("stCategory").value.trim();
+  const category = document.getElementById("stCategory").value;
+  const code = document.getElementById("stCode").value.trim();
   const target = document.getElementById("stTarget").value;
   if (!name) return toast("Enter a step name", "error");
+
   const payload = {
-    name, step_type, category: category || null,
-    target_seconds: target ? parseFloat(target) : null
+    name, category_group: category, step_type: category,
+    activity_code: code || null,
+    target_seconds: target ? parseFloat(target) : null,
+    is_element: false, parent_id: null
   };
-  let error;
+
+  let parentId = id;
   if (id) {
-    ({ error } = await sb.from("step_templates").update(payload).eq("id", id));
+    const { error } = await sb.from("step_templates").update(payload).eq("id", id);
+    if (error) return toast(error.message, "error");
+    // wipe existing children then re-add (simple + reliable)
+    await sb.from("step_templates").delete().eq("parent_id", id);
   } else {
     payload.project_id = PROJECT_ID;
-    payload.sort_order = STEPS.length;
-    ({ error } = await sb.from("step_templates").insert(payload));
+    payload.sort_order = STEPS.filter(s=>!s.parent_id).length;
+    const { data, error } = await sb.from("step_templates").insert(payload).select().single();
+    if (error) return toast(error.message, "error");
+    parentId = data.id;
   }
-  if (error) return toast(error.message, "error");
+
+  // insert elements as child rows
+  if (ELEMENTS_DRAFT.length) {
+    const rows = ELEMENTS_DRAFT.map((nm,i)=>({
+      project_id: PROJECT_ID, name: nm, category_group: category, step_type: category,
+      is_element: true, parent_id: parentId, sort_order: i
+    }));
+    const { error: eErr } = await sb.from("step_templates").insert(rows);
+    if (eErr) return toast(eErr.message, "error");
+  }
+
   toast("Saved!");
   closeNewStep();
   loadSteps();
 }
 
-async function toggleActive(id, val) {
-  await sb.from("step_templates").update({ is_active: val }).eq("id", id);
+async function toggleActive(id,val){ await sb.from("step_templates").update({is_active:val}).eq("id",id); loadSteps(); }
+async function deleteStep(id){
+  if(!confirm("Delete this step and its elements? Recorded entries keep their data."))return;
+  await sb.from("step_templates").delete().eq("parent_id",id);
+  await sb.from("step_templates").delete().eq("id",id);
+  loadSteps();
+}
+async function move(id,dir){
+  const parents = STEPS.filter(s=>!s.parent_id);
+  const idx = parents.findIndex(s=>s.id===id); const j=idx+dir;
+  if(j<0||j>=parents.length)return;
+  const a=parents[idx], b=parents[j];
+  await sb.from("step_templates").update({sort_order:b.sort_order}).eq("id",a.id);
+  await sb.from("step_templates").update({sort_order:a.sort_order}).eq("id",b.id);
   loadSteps();
 }
 
-async function deleteStep(id) {
-  if (!confirm("Delete this step template? Existing recorded entries will keep their data.")) return;
-  await sb.from("step_templates").delete().eq("id", id);
+// ---------- Seed library ----------
+async function seedLibrary() {
+  if (!window.ACTIVITY_LIBRARY) return toast("Library not loaded", "error");
+  if (!confirm("Load the standard MMU activity library? This adds the full Task/Customer/Orica/Other set (with reload & loading elements). Existing steps are kept.")) return;
+  const lib = window.ACTIVITY_LIBRARY.activities;
+  let order = STEPS.filter(s=>!s.parent_id).length;
+  for (const act of lib) {
+    const { data, error } = await sb.from("step_templates").insert({
+      project_id: PROJECT_ID, name: act.name, category_group: act.group, step_type: act.group,
+      activity_code: act.code || null, target_seconds: act.target || null,
+      is_element: false, parent_id: null, sort_order: order++
+    }).select().single();
+    if (error) { toast(error.message, "error"); continue; }
+    if (act.elements && act.elements.length) {
+      const rows = act.elements.map((nm,i)=>({
+        project_id: PROJECT_ID, name: nm, category_group: act.group, step_type: act.group,
+        is_element: true, parent_id: data.id, sort_order: i
+      }));
+      await sb.from("step_templates").insert(rows);
+    }
+  }
+  toast("Standard library loaded!");
   loadSteps();
 }
 
-async function move(id, dir) {
-  const idx = STEPS.findIndex(s => s.id === id);
-  const swapIdx = idx + dir;
-  if (swapIdx < 0 || swapIdx >= STEPS.length) return;
-  const a = STEPS[idx], b = STEPS[swapIdx];
-  await sb.from("step_templates").update({ sort_order: b.sort_order }).eq("id", a.id);
-  await sb.from("step_templates").update({ sort_order: a.sort_order }).eq("id", b.id);
-  loadSteps();
-}
-
+// ---------- Render grouped ----------
 async function loadSteps() {
   const { data, error } = await sb.from("step_templates").select("*").eq("project_id", PROJECT_ID).order("sort_order");
   if (error) { toast(error.message, "error"); return; }
   STEPS = data;
-  const list = document.getElementById("stepList");
-  if (!data.length) { list.innerHTML = `<p class="muted">No steps yet — click "+ New step" to add your first task, delay or break.</p>`; return; }
-  list.innerHTML = data.map((s, i) => `
-    <div class="row between" style="padding:10px 0;border-bottom:1px solid var(--border);${s.is_active?'':'opacity:.5;'}">
-      <div>
-        <span class="badge ${s.step_type}">${s.step_type}</span>
-        <strong>${escapeHtml(s.name)}</strong>
-        ${s.category ? `<span class="muted"> · ${escapeHtml(s.category)}</span>` : ""}
-        ${s.target_seconds ? `<span class="muted"> · target ${fmtDuration(s.target_seconds)}</span>` : ""}
-      </div>
-      <div class="row">
-        <button class="ghost small" onclick="move('${s.id}', -1)" ${i===0?'disabled':''}>↑</button>
-        <button class="ghost small" onclick="move('${s.id}', 1)" ${i===data.length-1?'disabled':''}>↓</button>
-        <button class="secondary small" onclick='openNewStep(${JSON.stringify(s).replace(/'/g,"&#39;")})'>Edit</button>
-        <button class="secondary small" onclick="toggleActive('${s.id}', ${!s.is_active})">${s.is_active?'Disable':'Enable'}</button>
-        <button class="danger small" onclick="deleteStep('${s.id}')">Delete</button>
-      </div>
-    </div>`).join("");
+  const parents = STEPS.filter(s=>!s.parent_id);
+  const groups = ["task","customer","orica","other"];
+  const container = document.getElementById("groupsContainer");
+
+  if (!parents.length) {
+    container.innerHTML = `<div class="card"><p class="muted">No steps yet. Click <strong>Load standard MMU library</strong> to preload the full activity set, or <strong>+ New step</strong> to add your own.</p></div>`;
+    return;
+  }
+
+  container.innerHTML = groups.map(g => {
+    const items = parents.filter(p => (p.category_group||"task") === g);
+    if (!items.length) return "";
+    const meta = window.CATEGORY_META[g];
+    return `
+      <div class="card">
+        <h3 style="color:${meta.color};">${meta.label} <span class="muted">(${items.length})</span></h3>
+        ${items.map((s,i)=>{
+          const kids = STEPS.filter(k=>k.parent_id===s.id).sort((a,b)=>a.sort_order-b.sort_order);
+          return `
+          <div style="padding:10px 0;border-bottom:1px solid var(--border);${s.is_active===false?'opacity:.5;':''}">
+            <div class="row between">
+              <div>
+                ${s.activity_code?`<span class="badge" style="background:#eef2f5;color:#5b7080;">#${escapeHtml(s.activity_code)}</span> `:''}
+                <strong>${escapeHtml(s.name)}</strong>
+                ${s.target_seconds?`<span class="muted"> · target ${fmtDuration(s.target_seconds)}</span>`:''}
+                ${kids.length?`<span class="muted"> · ${kids.length} elements</span>`:''}
+              </div>
+              <div class="row">
+                <button class="ghost small" onclick="move('${s.id}',-1)" ${i===0?'disabled':''}>↑</button>
+                <button class="ghost small" onclick="move('${s.id}',1)" ${i===items.length-1?'disabled':''}>↓</button>
+                <button class="secondary small" onclick='openNewStep(${JSON.stringify(s).replace(/'/g,"&#39;")})'>Edit</button>
+                <button class="secondary small" onclick="toggleActive('${s.id}',${!(s.is_active!==false)})">${s.is_active!==false?'Disable':'Enable'}</button>
+                <button class="danger small" onclick="deleteStep('${s.id}')">Delete</button>
+              </div>
+            </div>
+            ${kids.length?`<div class="muted" style="font-size:12px;margin-top:4px;padding-left:8px;">↳ ${kids.map(k=>escapeHtml(k.name)).join(" → ")}</div>`:''}
+          </div>`;
+        }).join("")}
+      </div>`;
+  }).join("");
 }
 
 boot();

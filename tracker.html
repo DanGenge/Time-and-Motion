@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <title>Tracker — Time &amp; Motion Tracker</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta name="theme-color" content="#0093D1">
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="js/config.js"></script>
@@ -11,6 +14,7 @@
 <script src="js/utils.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/presence.js"></script>
+<script src="js/activityLibrary.js"></script>
 </head>
 <body>
 
@@ -18,244 +22,360 @@
 
 <div class="wrap">
 
-  <!-- Run info -->
+  <!-- Run header + controls -->
   <div class="card">
     <div class="row between">
       <div>
-        <h2 class="mb0" id="runName">Loading run...</h2>
+        <h2 class="mb0" id="runName">Loading run…</h2>
         <p class="muted" id="runMeta" style="margin:4px 0 0;"></p>
       </div>
       <div style="text-align:right;">
         <div class="row" style="justify-content:flex-end;">
           <span class="sync-indicator"><span class="dot"></span> <span id="syncTime">syncing…</span></span>
-          <button class="small secondary" onclick="syncNow()">🔄 Sync now</button>
+          <button class="small secondary" onclick="syncNow()">🔄 Sync</button>
         </div>
         <div class="row mt8" style="justify-content:flex-end;">
           <span class="badge task">Cycle <span id="cycleNum">1</span></span>
-          <button class="small" onclick="newCycle()">+ New cycle</button>
+          <button class="small" onclick="newCycle()">+ Cycle</button>
           <button class="small warn" onclick="completeRun()" id="completeBtn">Complete run</button>
         </div>
       </div>
     </div>
+
+    <!-- Active context row: MMU / blast / data quality -->
+    <div class="grid cols-3 mt16">
+      <div class="field mb0">
+        <label>Active MMU / asset</label>
+        <div class="row">
+          <input id="activeMmu" placeholder="e.g. BM318" list="mmuList" style="flex:2;">
+          <datalist id="mmuList"></datalist>
+        </div>
+      </div>
+      <div class="field mb0"><label>Blast / shot name</label><input id="activeBlast" placeholder="e.g. RN14_UPG_BL18"></div>
+      <div class="field mb0">
+        <label>Data quality (applies to new entries)</label>
+        <select id="dataQuality">
+          <option value="observed">Observed</option>
+          <option value="estimated">Estimated</option>
+        </select>
+      </div>
+    </div>
+
     <div class="row mt16">
       <strong style="font-size:12px;color:var(--muted);">ONLINE NOW:</strong>
       <div class="presence-bar" id="presenceBar"></div>
     </div>
   </div>
 
-  <!-- Step cards -->
-  <div class="grid cols-2" id="stepGrid"></div>
+  <!-- Guided sequence panel (shown when an activity with elements is active) -->
+  <div id="sequencePanel" class="card hidden" style="border-color:var(--orica-cerulean);box-shadow:0 0 0 3px rgba(0,147,209,.15);">
+    <div class="row between">
+      <div>
+        <span class="badge" id="seqBadge">task</span>
+        <span id="seqActivity" style="font-weight:700;font-size:16px;"></span>
+      </div>
+      <button class="small secondary" onclick="cancelSequence()">✕ Close</button>
+    </div>
+    <div class="step-timer" id="seqTimer" style="font-size:40px;">00:00</div>
+    <div class="center" style="margin:6px 0;">
+      <div class="muted" style="font-size:12px;">NOW TIMING</div>
+      <div id="seqCurrent" style="font-size:20px;font-weight:700;color:var(--orica-dark);">—</div>
+      <div class="muted" style="font-size:12px;margin-top:4px;" id="seqNext"></div>
+    </div>
+    <div class="row" style="gap:10px;">
+      <button class="block" style="font-size:18px;padding:16px;" id="seqAdvanceBtn" onclick="advanceSequence()">▶ Start</button>
+    </div>
+    <div class="row mt8">
+      <button class="secondary small" onclick="skipCurrentElement()">⏭ Skip this element</button>
+      <button class="secondary small" onclick="finishSequence()">✓ Finish cycle</button>
+    </div>
+    <div class="last-entries mt8" id="seqLog"></div>
+  </div>
+
+  <!-- Activity grid, grouped by category -->
+  <div id="activityGroups"></div>
 
   <!-- Recent activity feed -->
   <div class="card">
     <h3>Recent activity (all users)</h3>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Time</th><th>Step</th><th>Type</th><th>Cycle</th><th>By</th><th>Duration</th><th>Method</th></tr></thead>
+        <thead><tr><th>Time</th><th>MMU</th><th>Activity</th><th>Element</th><th>Cat</th><th>Cycle</th><th>By</th><th>Dur</th><th>Q</th></tr></thead>
         <tbody id="feedBody"></tbody>
       </table>
     </div>
   </div>
+</div>
 
+<!-- Save-detail modal (note / opportunity) -->
+<div id="detailModal" class="card hidden" style="position:fixed;top:12%;left:50%;transform:translateX(-50%);z-index:200;max-width:420px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,.3);">
+  <h3 id="detailTitle">Entry saved</h3>
+  <div class="field"><label>Note (optional)</label><textarea id="detailNote" placeholder="e.g. hose jumped outside reel"></textarea></div>
+  <div id="oppWrap">
+    <label><input type="checkbox" id="detailOpp" onchange="document.getElementById('oppTypeWrap').style.display=this.checked?'block':'none'"> Flag as improvement opportunity</label>
+    <div id="oppTypeWrap" style="display:none;margin-top:6px;">
+      <select id="detailOppType">
+        <option value="planning">Opportunity: Planning</option>
+        <option value="resourcing">Opportunity: Resourcing</option>
+        <option value="other">Opportunity: Other</option>
+      </select>
+    </div>
+  </div>
+  <div class="row mt16">
+    <button onclick="saveDetail()">Save note</button>
+    <button class="secondary" onclick="closeDetail()">Skip</button>
+  </div>
 </div>
 
 <script>
 let PROJECT_ID = getParam("project");
 let RUN_ID = getParam("run");
 let CURRENT_USER = null;
-let STEPS = [];
+let STEPS = [];       // parents (activities)
+let ELEMENTS = {};    // parentId -> ordered element rows
 let CYCLE = 1;
-let timers = {}; // stepId -> { running: bool, startTs: number, intervalId }
-let lastEntryByStep = {}; // stepId -> latest entry summary text
+let simpleTimers = {}; // stepId -> {running,startTs,intervalId}
+let seq = null;        // active guided sequence state
+let lastEntryId = null;
 
 async function boot() {
-  if (!PROJECT_ID || !RUN_ID) { window.location.href = "index.html"; return; }
-  CURRENT_USER = await requireAuth();
-  if (!CURRENT_USER) return;
+  if (!PROJECT_ID || !RUN_ID) { window.location.href="index.html"; return; }
+  CURRENT_USER = await requireAuth(); if (!CURRENT_USER) return;
   await renderTopbar("tracker", CURRENT_USER);
   await loadRun();
   await loadSteps();
-  startPresence(PROJECT_ID, CURRENT_USER, (users) => renderPresenceBar("presenceBar", users));
+  startPresence(PROJECT_ID, CURRENT_USER, u=>renderPresenceBar("presenceBar",u));
   await syncNow();
   setInterval(syncNow, window.APP_CONFIG.AUTO_REFRESH_MS || 5000);
 }
 
 async function loadRun() {
   const { data, error } = await sb.from("study_runs").select("*").eq("id", RUN_ID).single();
-  if (error) { toast("Could not load run", "error"); return; }
+  if (error) { toast("Could not load run","error"); return; }
   document.getElementById("runName").textContent = data.run_name;
   document.getElementById("runMeta").textContent =
-    `${data.location||''} ${data.equipment ? '· '+data.equipment : ''} · started ${fmtDateTime(data.started_at)} by ${data.started_by_name||''}`;
-  document.getElementById("completeBtn").disabled = data.status === "completed";
-  if (data.status === "completed") document.getElementById("completeBtn").textContent = "Run completed";
+    `${data.location||''} ${data.equipment?'· '+data.equipment:''} · started ${fmtDateTime(data.started_at)} by ${data.started_by_name||''}`;
+  if (data.asset_name) document.getElementById("activeMmu").value = data.asset_name;
+  if (data.blast_name) document.getElementById("activeBlast").value = data.blast_name;
+  if (data.status==="completed"){ const b=document.getElementById("completeBtn"); b.disabled=true; b.textContent="Completed"; }
+  // populate MMU datalist from existing entries
+  const { data: mmus } = await sb.from("entries").select("mmu_name").eq("project_id",PROJECT_ID);
+  const uniq = [...new Set((mmus||[]).map(m=>m.mmu_name).filter(Boolean))];
+  document.getElementById("mmuList").innerHTML = uniq.map(m=>`<option value="${escapeHtml(m)}">`).join("");
 }
 
 async function loadSteps() {
-  const { data, error } = await sb.from("step_templates")
-    .select("*").eq("project_id", PROJECT_ID).eq("is_active", true).order("sort_order");
-  if (error) { toast(error.message, "error"); return; }
-  STEPS = data;
+  const { data, error } = await sb.from("step_templates").select("*")
+    .eq("project_id",PROJECT_ID).eq("is_active",true).order("sort_order");
+  if (error) { toast(error.message,"error"); return; }
+  STEPS = (data||[]).filter(s=>!s.parent_id);
+  ELEMENTS = {};
+  (data||[]).filter(s=>s.parent_id).forEach(e=>{ (ELEMENTS[e.parent_id]=ELEMENTS[e.parent_id]||[]).push(e); });
+  Object.values(ELEMENTS).forEach(arr=>arr.sort((a,b)=>a.sort_order-b.sort_order));
+  renderGroups();
+}
+
+function renderGroups() {
+  const groups = ["task","customer","orica","other"];
+  const container = document.getElementById("activityGroups");
   if (!STEPS.length) {
-    document.getElementById("stepGrid").innerHTML = `<div class="card"><p class="muted">No active step templates for this project yet. Go to <a href="templates.html?project=${PROJECT_ID}">Templates</a> to add tasks, delays and breaks.</p></div>`;
+    container.innerHTML = `<div class="card"><p class="muted">No active activities. Go to <a href="templates.html?project=${PROJECT_ID}">Templates</a> → Load standard MMU library.</p></div>`;
     return;
   }
-  renderStepGrid();
+  container.innerHTML = groups.map(g=>{
+    const items = STEPS.filter(s=>(s.category_group||"task")===g);
+    if (!items.length) return "";
+    const meta = window.CATEGORY_META[g];
+    return `<div class="card">
+      <h3 style="color:${meta.color};">${meta.label}</h3>
+      <div class="grid cols-3">
+        ${items.map(s=>{
+          const hasEl = (ELEMENTS[s.id]||[]).length>0;
+          return `<div class="step-card">
+            <div class="step-head"><div>
+              <span class="badge ${badgeClass(g)}">${g}</span>
+              <div class="step-name">${escapeHtml(s.name)}</div>
+              ${hasEl?`<span class="muted" style="font-size:11px;">${ELEMENTS[s.id].length} elements — guided</span>`:''}
+            </div></div>
+            <div class="step-timer" id="t-${s.id}">00:00</div>
+            <div class="step-actions">
+              ${hasEl
+                ? `<button onclick="startSequence('${s.id}')">▶ Start sequence</button>`
+                : `<button id="b-${s.id}" onclick="toggleSimple('${s.id}')">▶ Start</button>`}
+              <button class="secondary" onclick="skipSimple('${s.id}')">⏭ Skip</button>
+              <button class="secondary" onclick="manualPrompt('${s.id}')">✍ Manual</button>
+            </div>
+            <div class="last-entries" id="last-${s.id}"></div>
+          </div>`;
+        }).join("")}
+      </div></div>`;
+  }).join("");
+}
+function badgeClass(g){ return "cat-"+(g||"task"); }
+
+// ---------- Simple single-timer activities ----------
+function toggleSimple(id){ const t=simpleTimers[id]; if(t&&t.running) stopSimple(id); else startSimple(id); }
+function startSimple(id){
+  const startTs=Date.now(); simpleTimers[id]={running:true,startTs};
+  const b=document.getElementById(`b-${id}`); b.textContent="⏸ Stop"; b.classList.add("danger");
+  simpleTimers[id].intervalId=setInterval(()=>{ document.getElementById(`t-${id}`).textContent=fmtDuration((Date.now()-startTs)/1000); },200);
+}
+async function stopSimple(id){
+  const t=simpleTimers[id]; if(!t)return; clearInterval(t.intervalId);
+  const dur=(Date.now()-t.startTs)/1000, startIso=new Date(t.startTs).toISOString(), endIso=new Date().toISOString();
+  simpleTimers[id]={running:false};
+  const b=document.getElementById(`b-${id}`); b.textContent="▶ Start"; b.classList.remove("danger");
+  document.getElementById(`t-${id}`).textContent="00:00";
+  const s=STEPS.find(x=>x.id===id);
+  await saveEntry(s,null,{duration_seconds:dur,entry_method:"stopwatch",start_time:startIso,end_time:endIso});
+}
+async function skipSimple(id){ const s=STEPS.find(x=>x.id===id); await saveEntry(s,null,{duration_seconds:0,entry_method:"skip",skipped:true}); }
+function manualPrompt(id){
+  const v=prompt("Enter time (e.g. 1:45 or 105 seconds):"); if(v===null)return;
+  const secs=parseDurationInput(v); if(secs==null)return toast("Invalid time","error");
+  const s=STEPS.find(x=>x.id===id); saveEntry(s,null,{duration_seconds:secs,entry_method:"manual"});
 }
 
-function renderStepGrid() {
-  const grid = document.getElementById("stepGrid");
-  grid.innerHTML = STEPS.map(s => `
-    <div class="step-card" id="card-${s.id}">
-      <div class="step-head">
-        <div>
-          <span class="badge ${s.step_type}">${s.step_type}</span>
-          <div class="step-name">${escapeHtml(s.name)}</div>
-          ${s.target_seconds ? `<span class="muted" style="font-size:11px;">target ${fmtDuration(s.target_seconds)}</span>` : ""}
-        </div>
-      </div>
-      <div class="step-timer" id="timer-${s.id}">00:00</div>
-      <div class="step-actions">
-        <button id="btn-${s.id}" onclick="toggleStopwatch('${s.id}')">▶ Start</button>
-        <button class="secondary" onclick="skipStep('${s.id}')">⏭ Skip</button>
-        <button class="secondary" onclick="toggleManual('${s.id}')">✍ Manual</button>
-      </div>
-      <div class="manual-entry" id="manual-${s.id}">
-        <input type="text" id="manualInput-${s.id}" placeholder="e.g. 1:45 or 105 (sec)">
-        <button class="small" onclick="saveManual('${s.id}')">Save</button>
-      </div>
-      <div class="last-entries" id="last-${s.id}">No entries yet this run.</div>
-    </div>
-  `).join("");
+// ---------- Guided element sequence ----------
+function startSequence(stepId){
+  const s=STEPS.find(x=>x.id===stepId); const els=ELEMENTS[stepId]||[];
+  seq={ step:s, elements:els, idx:-1, running:false, startTs:null, intervalId:null, log:[] };
+  document.getElementById("sequencePanel").classList.remove("hidden");
+  document.getElementById("seqActivity").textContent=s.name;
+  const badge=document.getElementById("seqBadge"); badge.textContent=s.category_group||"task"; badge.className="badge "+badgeClass(s.category_group||"task");
+  document.getElementById("seqCurrent").textContent="—";
+  document.getElementById("seqNext").textContent="Tap Start to begin: "+(els[0]?.name||"");
+  document.getElementById("seqTimer").textContent="00:00";
+  document.getElementById("seqAdvanceBtn").textContent="▶ Start";
+  document.getElementById("seqLog").innerHTML="";
+  window.scrollTo({top:0,behavior:"smooth"});
 }
+function seqTick(){ if(seq&&seq.running) document.getElementById("seqTimer").textContent=fmtDuration((Date.now()-seq.startTs)/1000); }
 
-function toggleManual(stepId) {
-  document.getElementById(`manual-${stepId}`).classList.toggle("open");
-}
-
-async function saveManual(stepId) {
-  const val = document.getElementById(`manualInput-${stepId}`).value;
-  const seconds = parseDurationInput(val);
-  if (seconds == null || seconds < 0) return toast("Enter a valid time, e.g. 1:45 or 105", "error");
-  const step = STEPS.find(s => s.id === stepId);
-  await saveEntry(step, { duration_seconds: seconds, entry_method: "manual" });
-  document.getElementById(`manualInput-${stepId}`).value = "";
-  document.getElementById(`manual-${stepId}`).classList.remove("open");
-}
-
-function toggleStopwatch(stepId) {
-  const t = timers[stepId];
-  if (t && t.running) {
-    stopStopwatch(stepId);
-  } else {
-    startStopwatch(stepId);
+async function advanceSequence(){
+  if(!seq)return;
+  // finalise the element currently being timed (if any)
+  if(seq.running && seq.idx>=0){
+    await commitCurrentElement();
   }
+  // move to next
+  seq.idx++;
+  if(seq.idx>=seq.elements.length){ await finishSequence(); return; }
+  seq.running=true; seq.startTs=Date.now();
+  clearInterval(seq.intervalId); seq.intervalId=setInterval(seqTick,200);
+  document.getElementById("seqCurrent").textContent=seq.elements[seq.idx].name;
+  document.getElementById("seqNext").textContent = seq.idx+1<seq.elements.length ? "next: "+seq.elements[seq.idx+1].name : "next: ✓ Finish cycle";
+  document.getElementById("seqAdvanceBtn").textContent = seq.idx+1<seq.elements.length ? "✓ Save & next ▶" : "✓ Save & finish";
+  document.getElementById("seqTimer").textContent="00:00";
 }
-
-function startStopwatch(stepId) {
-  const startTs = Date.now();
-  timers[stepId] = { running: true, startTs };
-  const btn = document.getElementById(`btn-${stepId}`);
-  btn.textContent = "⏸ Stop";
-  btn.classList.add("danger");
-  document.getElementById(`card-${stepId}`).classList.add("running");
-  timers[stepId].intervalId = setInterval(() => {
-    const elapsed = (Date.now() - startTs) / 1000;
-    document.getElementById(`timer-${stepId}`).textContent = fmtDuration(elapsed);
-  }, 200);
+async function commitCurrentElement(){
+  const el=seq.elements[seq.idx]; const dur=(Date.now()-seq.startTs)/1000;
+  const startIso=new Date(seq.startTs).toISOString(), endIso=new Date().toISOString();
+  clearInterval(seq.intervalId); seq.running=false;
+  await saveEntry(seq.step, el, {duration_seconds:dur,entry_method:"stopwatch",start_time:startIso,end_time:endIso}, true);
+  seq.log.unshift(`✓ ${el.name}: ${fmtDuration(dur)}`);
+  document.getElementById("seqLog").innerHTML=seq.log.slice(0,8).join("<br>");
 }
-
-async function stopStopwatch(stepId) {
-  const t = timers[stepId];
-  if (!t) return;
-  clearInterval(t.intervalId);
-  const durationSeconds = (Date.now() - t.startTs) / 1000;
-  const startIso = new Date(t.startTs).toISOString();
-  const endIso = new Date().toISOString();
-  timers[stepId] = { running: false };
-  const btn = document.getElementById(`btn-${stepId}`);
-  btn.textContent = "▶ Start";
-  btn.classList.remove("danger");
-  document.getElementById(`card-${stepId}`).classList.remove("running");
-  document.getElementById(`timer-${stepId}`).textContent = "00:00";
-  const step = STEPS.find(s => s.id === stepId);
-  await saveEntry(step, {
-    duration_seconds: durationSeconds,
-    entry_method: "stopwatch",
-    start_time: startIso,
-    end_time: endIso
-  });
+async function skipCurrentElement(){
+  if(!seq||seq.idx<0)return;
+  const el=seq.elements[seq.idx];
+  clearInterval(seq.intervalId); seq.running=false;
+  await saveEntry(seq.step, el, {duration_seconds:0,entry_method:"skip",skipped:true}, true);
+  seq.log.unshift(`⏭ ${el.name}: skipped`);
+  document.getElementById("seqLog").innerHTML=seq.log.slice(0,8).join("<br>");
+  seq.idx++;
+  if(seq.idx>=seq.elements.length){ await finishSequence(); return; }
+  seq.running=true; seq.startTs=Date.now(); seq.intervalId=setInterval(seqTick,200);
+  document.getElementById("seqCurrent").textContent=seq.elements[seq.idx].name;
+  document.getElementById("seqNext").textContent = seq.idx+1<seq.elements.length ? "next: "+seq.elements[seq.idx+1].name : "next: ✓ Finish cycle";
+  document.getElementById("seqTimer").textContent="00:00";
 }
-
-async function skipStep(stepId) {
-  const step = STEPS.find(s => s.id === stepId);
-  await saveEntry(step, { duration_seconds: 0, entry_method: "skip", skipped: true });
+async function finishSequence(){
+  if(seq&&seq.running&&seq.idx>=0&&seq.idx<seq.elements.length){ await commitCurrentElement(); }
+  cancelSequence();
+  toast("Cycle complete — starting next cycle");
+  newCycle();
 }
+function cancelSequence(){ if(seq){clearInterval(seq.intervalId);} seq=null; document.getElementById("sequencePanel").classList.add("hidden"); }
 
-async function saveEntry(step, extra) {
-  const now = new Date().toISOString();
-  const payload = {
-    run_id: RUN_ID,
-    project_id: PROJECT_ID,
-    step_template_id: step.id,
-    step_name: step.name,
-    step_type: step.step_type,
-    cycle_number: CYCLE,
-    recorded_by: CURRENT_USER.id,
-    recorded_by_name: CURRENT_USER.display_name,
-    start_time: extra.start_time || now,
-    end_time: extra.end_time || now,
-    duration_seconds: extra.duration_seconds,
-    entry_method: extra.entry_method,
-    skipped: extra.skipped || false
+// ---------- Save ----------
+async function saveEntry(step, element, extra, quiet){
+  const now=new Date().toISOString();
+  const payload={
+    run_id:RUN_ID, project_id:PROJECT_ID, step_template_id:step.id,
+    step_name:step.name, step_type:step.category_group||step.step_type||"task",
+    category_group:step.category_group||"task",
+    parent_step_name: element? step.name : null,
+    element_name: element? element.name : null,
+    cycle_number:CYCLE, recorded_by:CURRENT_USER.id, recorded_by_name:CURRENT_USER.display_name,
+    start_time:extra.start_time||now, end_time:extra.end_time||now,
+    duration_seconds:extra.duration_seconds, entry_method:extra.entry_method, skipped:extra.skipped||false,
+    data_quality:document.getElementById("dataQuality").value,
+    mmu_name:document.getElementById("activeMmu").value.trim()||null,
+    blast_name:document.getElementById("activeBlast").value.trim()||null
   };
-  const { error } = await sb.from("entries").insert(payload);
-  if (error) return toast(error.message, "error");
-  toast(`${step.name}: ${extra.entry_method === 'skip' ? 'skipped' : fmtDuration(extra.duration_seconds)} saved`);
+  const { data, error }=await sb.from("entries").insert(payload).select().single();
+  if(error)return toast(error.message,"error");
+  lastEntryId=data.id;
+  if(!quiet){
+    toast(`${element?element.name:step.name}: ${extra.skipped?'skipped':fmtDuration(extra.duration_seconds)} saved`);
+    openDetail(step.category_group||"task");
+  }
   syncNow();
 }
 
-function newCycle() {
-  const anyRunning = Object.values(timers).some(t => t?.running);
-  if (anyRunning) return toast("Stop the current stopwatch before starting a new cycle", "error");
-  CYCLE += 1;
-  document.getElementById("cycleNum").textContent = CYCLE;
-  toast(`Cycle ${CYCLE} started`);
+// ---------- Detail modal (note + opportunity) ----------
+function openDetail(cat){
+  document.getElementById("detailNote").value="";
+  document.getElementById("detailOpp").checked=false;
+  document.getElementById("oppTypeWrap").style.display="none";
+  // opportunity flag only meaningful for delays
+  document.getElementById("oppWrap").style.display = (cat==="customer"||cat==="orica")?"block":"none";
+  document.getElementById("detailModal").classList.remove("hidden");
+}
+function closeDetail(){ document.getElementById("detailModal").classList.add("hidden"); }
+async function saveDetail(){
+  if(!lastEntryId){ closeDetail(); return; }
+  const note=document.getElementById("detailNote").value.trim();
+  const opp=document.getElementById("detailOpp").checked;
+  const oppType=document.getElementById("detailOppType").value;
+  await sb.from("entries").update({
+    notes:note||null, is_opportunity:opp, opportunity_type: opp?oppType:null
+  }).eq("id",lastEntryId);
+  closeDetail(); syncNow();
 }
 
-async function completeRun() {
-  if (!confirm("Mark this run as completed? You can still view its data afterwards.")) return;
-  await sb.from("study_runs").update({ status: "completed", ended_at: new Date().toISOString() }).eq("id", RUN_ID);
-  toast("Run marked as completed");
-  loadRun();
+// ---------- Cycle / complete / sync ----------
+function newCycle(){
+  const running=Object.values(simpleTimers).some(t=>t?.running)||(seq&&seq.running);
+  if(running)return toast("Stop the running timer before a new cycle","error");
+  CYCLE++; document.getElementById("cycleNum").textContent=CYCLE; toast(`Cycle ${CYCLE}`);
 }
-
-async function syncNow() {
-  const { data, error } = await sb.from("entries")
-    .select("*").eq("run_id", RUN_ID).order("created_at", { ascending: false }).limit(50);
-  if (error) return;
-  document.getElementById("syncTime").textContent = "synced " + new Date().toLocaleTimeString("en-AU");
-
-  // Update "last entry" text per step card
-  STEPS.forEach(s => {
-    const last = data.find(e => e.step_template_id === s.id);
-    const el = document.getElementById(`last-${s.id}`);
-    if (el) {
-      el.textContent = last
-        ? `Last: ${last.skipped ? 'skipped' : fmtDuration(last.duration_seconds)} by ${last.recorded_by_name || '?'} (cycle ${last.cycle_number}) · ${fmtDateTime(last.created_at)}`
-        : "No entries yet this run.";
-    }
+async function completeRun(){
+  if(!confirm("Mark this run completed? You can still view its data."))return;
+  await sb.from("study_runs").update({status:"completed",ended_at:new Date().toISOString()}).eq("id",RUN_ID);
+  toast("Run completed"); loadRun();
+}
+async function syncNow(){
+  const { data, error }=await sb.from("entries").select("*").eq("run_id",RUN_ID).order("created_at",{ascending:false}).limit(60);
+  if(error)return;
+  document.getElementById("syncTime").textContent="synced "+new Date().toLocaleTimeString("en-AU");
+  STEPS.forEach(s=>{
+    const last=(data||[]).find(e=>e.step_template_id===s.id);
+    const el=document.getElementById(`last-${s.id}`);
+    if(el) el.textContent=last?`Last: ${last.skipped?'skipped':fmtDuration(last.duration_seconds)} · ${last.mmu_name||''} · ${fmtDateTime(last.created_at)}`:"";
   });
-
-  // Update feed table
-  document.getElementById("feedBody").innerHTML = data.map(e => `
+  document.getElementById("feedBody").innerHTML=(data||[]).map(e=>`
     <tr>
       <td>${fmtDateTime(e.created_at)}</td>
-      <td>${escapeHtml(e.step_name)}</td>
-      <td><span class="badge ${e.step_type}">${e.step_type}</span></td>
+      <td>${escapeHtml(e.mmu_name||'')}</td>
+      <td>${escapeHtml(e.parent_step_name||e.step_name)}</td>
+      <td>${escapeHtml(e.element_name||'')}</td>
+      <td><span class="badge ${badgeClass(e.category_group||'task')}">${(e.category_group||'task').slice(0,4)}</span></td>
       <td>${e.cycle_number}</td>
       <td>${escapeHtml(e.recorded_by_name||'')}</td>
-      <td>${e.skipped ? '<span class="muted">skipped</span>' : fmtDuration(e.duration_seconds)}</td>
-      <td>${e.entry_method}</td>
+      <td>${e.skipped?'<span class="muted">skip</span>':fmtDuration(e.duration_seconds)}</td>
+      <td>${(e.data_quality||'obs').slice(0,3)}</td>
     </tr>`).join("");
 }
 

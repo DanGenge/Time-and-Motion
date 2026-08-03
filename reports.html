@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <title>Reports — Time &amp; Motion Tracker</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta name="theme-color" content="#0093D1">
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
@@ -11,6 +14,7 @@
 <script src="js/supabaseClient.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/auth.js"></script>
+<script src="js/activityLibrary.js"></script>
 </head>
 <body>
 
@@ -23,314 +27,268 @@
     <h3>Filters</h3>
     <div class="grid cols-3">
       <div class="field"><label>Runs</label><select id="fRuns" multiple size="4"></select></div>
-      <div class="field"><label>Users</label><select id="fUsers" multiple size="4"></select></div>
-      <div class="field"><label>Steps</label><select id="fSteps" multiple size="4"></select></div>
-      <div class="field"><label>Type</label>
-        <select id="fType"><option value="">All</option><option value="task">Task</option><option value="delay">Delay</option><option value="break">Break</option></select>
+      <div class="field"><label>MMUs</label><select id="fMmu" multiple size="4"></select></div>
+      <div class="field"><label>Category</label>
+        <select id="fCat"><option value="">All</option><option value="task">Task</option><option value="customer">Customer</option><option value="orica">Orica</option><option value="other">Other</option></select>
+      </div>
+      <div class="field"><label>Data quality</label>
+        <select id="fQuality"><option value="">Observed + Estimated</option><option value="observed">Observed only</option><option value="estimated">Estimated only</option></select>
       </div>
       <div class="field"><label>From date</label><input type="date" id="fFrom"></div>
       <div class="field"><label>To date</label><input type="date" id="fTo"></div>
     </div>
-    <button onclick="applyFilters()">Apply filters</button>
-    <span class="muted" id="filterSummary" style="margin-left:10px;font-size:12px;"></span>
+    <div class="row">
+      <div class="field mb0" style="min-width:120px;"><label>MMUs (÷)</label><input type="number" id="divMmu" placeholder="auto"></div>
+      <div class="field mb0" style="min-width:120px;"><label>Days (÷)</label><input type="number" id="divDays" placeholder="auto"></div>
+      <button onclick="applyFilters()">Apply</button>
+      <span class="muted" id="filterSummary" style="font-size:12px;"></span>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:6px;">hrs/MMU/day = total hours ÷ (MMUs × days). Leave ÷ blank to auto-sum from selected runs' MMU count &amp; observation days.</p>
   </div>
 
   <div class="tabs">
-    <div class="tab active" onclick="switchTab('summary')" id="tab-summary">Summary &amp; Efficiency</div>
-    <div class="tab" onclick="switchTab('compare')" id="tab-compare">Compare / Chart builder</div>
-    <div class="tab" onclick="switchTab('trend')" id="tab-trend">Trend over time</div>
+    <div class="tab active" id="tab-cat" onclick="switchTab('cat')">Category summary</div>
+    <div class="tab" id="tab-drill" onclick="switchTab('drill')">Drill-down</div>
+    <div class="tab" id="tab-opp" onclick="switchTab('opp')">Opportunity re-cut</div>
+    <div class="tab" id="tab-dth" onclick="switchTab('dth')">Delays vs DTH</div>
+    <div class="tab" id="tab-compare" onclick="switchTab('compare')">Compare builder</div>
   </div>
 
-  <!-- Tab: Summary -->
-  <div id="panel-summary">
+  <!-- CATEGORY SUMMARY -->
+  <div id="panel-cat">
     <div class="card">
-      <h3>Per-step summary (filtered data)</h3>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Step</th><th>Type</th><th>Count</th><th>Avg</th><th>Min</th><th>Max</th><th>Total</th><th>Target</th><th>Efficiency</th><th>Skip %</th></tr></thead>
-          <tbody id="summaryBody"></tbody>
-        </table>
-      </div>
+      <div class="stat-grid" id="statTiles"></div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card"><h3>Total hours by category</h3><div class="chart-box"><canvas id="catPie" height="220"></canvas></div></div>
+      <div class="card"><h3>hrs / MMU / day by category</h3><div class="chart-box"><canvas id="catBar" height="220"></canvas></div></div>
+    </div>
+    <div class="card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>Category</th><th>Entries</th><th>Total hrs</th><th>hrs/MMU/day</th><th>% of time</th></tr></thead>
+        <tbody id="catTable"></tbody>
+      </table></div>
     </div>
   </div>
 
-  <!-- Tab: Compare / Chart builder -->
+  <!-- DRILL-DOWN -->
+  <div id="panel-drill" class="hidden">
+    <div class="card">
+      <div class="row">
+        <div class="field mb0" style="min-width:220px;"><label>Category to expand</label>
+          <select id="drillCat" onchange="buildDrill()"><option value="customer">Customer Delay</option><option value="orica">Orica Delay</option><option value="task">Task</option><option value="other">Other</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card"><h3 id="drillTitle">Breakdown</h3><div class="chart-box"><canvas id="drillPie" height="240"></canvas></div></div>
+      <div class="card"><h3>By element / sub-activity</h3><div class="table-wrap"><table><thead><tr><th>Activity</th><th>Element</th><th>Count</th><th>Total hrs</th><th>hrs/MMU/day</th></tr></thead><tbody id="drillTable"></tbody></table></div></div>
+    </div>
+  </div>
+
+  <!-- OPPORTUNITY -->
+  <div id="panel-opp" class="hidden">
+    <div class="card">
+      <p class="muted" style="font-size:13px;">Recolours delays flagged as improvement opportunities (planning / resourcing), mirroring the "Opportunity" re-cut slide.</p>
+      <div class="stat-grid" id="oppTiles"></div>
+    </div>
+    <div class="card"><h3>Delays recut as Opportunity</h3><div class="chart-box"><canvas id="oppBar" height="220"></canvas></div></div>
+  </div>
+
+  <!-- DTH -->
+  <div id="panel-dth" class="hidden">
+    <div class="card">
+      <p class="muted" style="font-size:13px;">Daily delay hours (bars) against tonnes DTH (line). DTH is taken from run-level or entry-level tonnes.</p>
+      <div class="chart-box"><canvas id="dthChart" height="200"></canvas></div>
+    </div>
+  </div>
+
+  <!-- COMPARE -->
   <div id="panel-compare" class="hidden">
     <div class="card">
-      <h3>Build your comparison</h3>
       <div class="grid cols-3">
         <div class="field"><label>Rows (group by)</label>
-          <select id="cRows">
-            <option value="step_name">Step</option>
-            <option value="recorded_by_name">User</option>
-            <option value="run_name">Run</option>
-            <option value="cycle_number">Cycle</option>
-            <option value="step_type">Type</option>
-            <option value="date">Date</option>
-          </select>
-        </div>
-        <div class="field"><label>Columns (split by, optional)</label>
-          <select id="cCols">
-            <option value="">None</option>
-            <option value="recorded_by_name">User</option>
-            <option value="run_name">Run</option>
-            <option value="step_type">Type</option>
-          </select>
+          <select id="cRows"><option value="step_name">Activity</option><option value="mmu_name">MMU</option><option value="category_group">Category</option><option value="recorded_by_name">User</option><option value="blast_name">Blast</option><option value="date">Date</option></select>
         </div>
         <div class="field"><label>Metric</label>
-          <select id="cMetric">
-            <option value="avg">Average duration</option>
-            <option value="total">Total duration</option>
-            <option value="count">Count</option>
-            <option value="efficiency">Efficiency % (target/avg)</option>
-          </select>
+          <select id="cMetric"><option value="avg">Average duration</option><option value="total">Total duration</option><option value="hrsday">hrs/MMU/day</option><option value="count">Count</option></select>
         </div>
-        <div class="field"><label>Chart style</label>
-          <select id="cChart">
-            <option value="table">Table only</option>
-            <option value="bar">Bar</option>
-            <option value="stackedbar">Stacked bar</option>
-            <option value="line">Line</option>
-            <option value="pie">Pie</option>
-            <option value="doughnut">Doughnut</option>
-            <option value="scatter">Scatter</option>
-          </select>
+        <div class="field"><label>Chart</label>
+          <select id="cChart"><option value="bar">Bar</option><option value="line">Line</option><option value="pie">Pie</option><option value="doughnut">Doughnut</option><option value="table">Table only</option></select>
         </div>
       </div>
       <button onclick="buildCompare()">Build</button>
     </div>
-    <div class="card">
-      <div class="table-wrap"><table id="pivotTable"><thead></thead><tbody></tbody></table></div>
-      <div style="max-width:100%;margin-top:16px;"><canvas id="compareCanvas" height="100"></canvas></div>
-    </div>
-  </div>
-
-  <!-- Tab: Trend -->
-  <div id="panel-trend" class="hidden">
-    <div class="card">
-      <div class="row">
-        <div class="field" style="min-width:220px;"><label>Step to trend</label><select id="tStep"></select></div>
-        <div class="field" style="min-width:220px;"><label>X-axis</label>
-          <select id="tXAxis"><option value="cycle_number">Cycle number</option><option value="created_at">Timestamp</option></select>
-        </div>
-      </div>
-      <button onclick="buildTrend()">Build trend</button>
-    </div>
-    <div class="card"><canvas id="trendCanvas" height="90"></canvas></div>
+    <div class="card"><div class="table-wrap"><table id="pivotTable"><thead></thead><tbody></tbody></table></div><div class="chart-box mt16"><canvas id="compareCanvas" height="140"></canvas></div></div>
   </div>
 
 </div>
 
 <script>
-let PROJECT_ID = getParam("project");
-let ALL_ENTRIES = [];
-let FILTERED = [];
-let TEMPLATES = [];
-let compareChart = null, trendChart = null;
+let PROJECT_ID=getParam("project");
+let ALL=[], FILTERED=[], RUNS=[], TEMPLATES=[];
+let charts={};
 
-async function boot() {
-  if (!PROJECT_ID) { window.location.href = "index.html"; return; }
-  const user = await requireAuth();
-  if (!user) return;
-  await renderTopbar("reports", user);
-  await loadFilterOptions();
-  await loadData();
-  applyFilters();
+async function boot(){
+  if(!PROJECT_ID){window.location.href="index.html";return;}
+  const u=await requireAuth(); if(!u)return;
+  await renderTopbar("reports",u);
+  await loadOptions(); await loadData(); applyFilters();
 }
-
-async function loadFilterOptions() {
-  const [{ data: runs }, { data: templates }] = await Promise.all([
-    sb.from("study_runs").select("id, run_name").eq("project_id", PROJECT_ID).order("started_at", { ascending: false }),
-    sb.from("step_templates").select("*").eq("project_id", PROJECT_ID).order("sort_order")
+async function loadOptions(){
+  const [{data:runs},{data:tmpl}]=await Promise.all([
+    sb.from("study_runs").select("*").eq("project_id",PROJECT_ID).order("started_at",{ascending:false}),
+    sb.from("step_templates").select("*").eq("project_id",PROJECT_ID)
   ]);
-  TEMPLATES = templates || [];
-  document.getElementById("fRuns").innerHTML = (runs||[]).map(r => `<option value="${r.id}">${escapeHtml(r.run_name)}</option>`).join("");
-  document.getElementById("fSteps").innerHTML = TEMPLATES.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}</option>`).join("");
-  document.getElementById("tStep").innerHTML = TEMPLATES.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}</option>`).join("");
+  RUNS=runs||[]; TEMPLATES=tmpl||[];
+  document.getElementById("fRuns").innerHTML=RUNS.map(r=>`<option value="${r.id}">${escapeHtml(r.run_name)}</option>`).join("");
 }
-
-async function loadData() {
-  const { data, error } = await sb.from("entries")
-    .select("*, study_runs(run_name)")
-    .eq("project_id", PROJECT_ID)
-    .order("created_at", { ascending: true });
-  if (error) return toast(error.message, "error");
-  ALL_ENTRIES = (data||[]).map(e => ({ ...e, run_name: e.study_runs?.run_name || "" }));
-  const users = [...new Set(ALL_ENTRIES.map(e => e.recorded_by_name).filter(Boolean))];
-  document.getElementById("fUsers").innerHTML = users.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join("");
+async function loadData(){
+  const {data,error}=await sb.from("entries").select("*, study_runs(run_name,mmu_count,observation_days,dth_tonnes)").eq("project_id",PROJECT_ID).order("created_at",{ascending:true});
+  if(error)return toast(error.message,"error");
+  ALL=(data||[]).map(e=>({...e,run_name:e.study_runs?.run_name||"",_run:e.study_runs||{}}));
+  const mmus=[...new Set(ALL.map(e=>e.mmu_name).filter(Boolean))];
+  document.getElementById("fMmu").innerHTML=mmus.map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
 }
+function sel(id){return Array.from(document.getElementById(id).selectedOptions).map(o=>o.value);}
 
-function selectedValues(id) {
-  return Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
-}
-
-function applyFilters() {
-  const runs = selectedValues("fRuns");
-  const users = selectedValues("fUsers");
-  const steps = selectedValues("fSteps");
-  const type = document.getElementById("fType").value;
-  const from = document.getElementById("fFrom").value;
-  const to = document.getElementById("fTo").value;
-
-  FILTERED = ALL_ENTRIES.filter(e => {
-    if (runs.length && !runs.includes(e.run_id)) return false;
-    if (users.length && !users.includes(e.recorded_by_name)) return false;
-    if (steps.length && !steps.includes(e.step_name)) return false;
-    if (type && e.step_type !== type) return false;
-    if (from && new Date(e.created_at) < new Date(from)) return false;
-    if (to && new Date(e.created_at) > new Date(to + "T23:59:59")) return false;
+function applyFilters(){
+  const runs=sel("fRuns"),mmus=sel("fMmu"),cat=document.getElementById("fCat").value,q=document.getElementById("fQuality").value;
+  const from=document.getElementById("fFrom").value,to=document.getElementById("fTo").value;
+  FILTERED=ALL.filter(e=>{
+    if(runs.length&&!runs.includes(e.run_id))return false;
+    if(mmus.length&&!mmus.includes(e.mmu_name))return false;
+    if(cat&&(e.category_group||"task")!==cat)return false;
+    if(q&&(e.data_quality||"observed")!==q)return false;
+    if(from&&new Date(e.created_at)<new Date(from))return false;
+    if(to&&new Date(e.created_at)>new Date(to+"T23:59:59"))return false;
     return true;
   });
-  document.getElementById("filterSummary").textContent = `${FILTERED.length} entries match`;
-  renderSummary();
+  document.getElementById("filterSummary").textContent=`${FILTERED.length} entries`;
+  renderCat(); if(document.getElementById("panel-drill").classList.contains("hidden")===false)buildDrill();
 }
 
-function switchTab(name) {
-  ["summary","compare","trend"].forEach(t => {
-    document.getElementById(`tab-${t}`).classList.toggle("active", t===name);
-    document.getElementById(`panel-${t}`).classList.toggle("hidden", t!==name);
-  });
-}
-
-// ---------- Summary tab ----------
-function renderSummary() {
-  const byStep = {};
-  FILTERED.forEach(e => {
-    const key = e.step_name + "|" + e.step_type;
-    byStep[key] = byStep[key] || { name: e.step_name, type: e.step_type, durations: [], skips: 0, count: 0 };
-    if (e.skipped) byStep[key].skips++;
-    else byStep[key].durations.push(e.duration_seconds || 0);
-    byStep[key].count++;
-  });
-  const rows = Object.values(byStep).map(s => {
-    const tmpl = TEMPLATES.find(t => t.name === s.name);
-    const avg = s.durations.length ? s.durations.reduce((a,b)=>a+b,0)/s.durations.length : null;
-    const min = s.durations.length ? Math.min(...s.durations) : null;
-    const max = s.durations.length ? Math.max(...s.durations) : null;
-    const totalDuration = s.durations.reduce((a,b)=>a+b,0);
-    const target = tmpl?.target_seconds;
-    const eff = (target && avg) ? (target/avg*100) : null;
-    const skipPct = s.count ? (s.skips/s.count*100) : 0;
-    return { ...s, avg, min, max, totalDuration, target, eff, skipPct };
-  }).sort((a,b) => a.name.localeCompare(b.name));
-
-  document.getElementById("summaryBody").innerHTML = rows.map(r => `
-    <tr>
-      <td>${escapeHtml(r.name)}</td>
-      <td><span class="badge ${r.type}">${r.type}</span></td>
-      <td>${r.count}</td>
-      <td>${fmtDuration(r.avg)}</td>
-      <td>${fmtDuration(r.min)}</td>
-      <td>${fmtDuration(r.max)}</td>
-      <td>${fmtDuration(r.totalDuration)}</td>
-      <td>${r.target ? fmtDuration(r.target) : "—"}</td>
-      <td>${r.eff ? `<span style="color:${r.eff>=100?'#00843D':r.eff>=85?'#d97706':'#dc2626'};font-weight:700;">${r.eff.toFixed(0)}%</span>` : "—"}</td>
-      <td>${r.skipPct.toFixed(0)}%</td>
-    </tr>`).join("") || `<tr><td colspan="10" class="muted">No data matches your filters.</td></tr>`;
-}
-
-// ---------- Compare / Chart builder tab ----------
-function metricLabel(row, metric) {
-  if (row.durations.length === 0) return metric === "count" ? row.count : null;
-  const avg = row.durations.reduce((a,b)=>a+b,0)/row.durations.length;
-  const total = row.durations.reduce((a,b)=>a+b,0);
-  if (metric === "avg") return avg;
-  if (metric === "total") return total;
-  if (metric === "count") return row.count;
-  if (metric === "efficiency") {
-    if (!row.target) return null;
-    return row.target/avg*100;
+// divisor: MMUs × days
+function divisor(){
+  let mmu=parseFloat(document.getElementById("divMmu").value);
+  let days=parseFloat(document.getElementById("divDays").value);
+  if(!mmu||!days){
+    const runs=sel("fRuns"); const set=runs.length?RUNS.filter(r=>runs.includes(r.id)):RUNS;
+    const autoMmu=set.reduce((a,r)=>a+(parseFloat(r.mmu_count)||0),0);
+    const autoDays=set.reduce((a,r)=>a+(parseFloat(r.observation_days)||0),0);
+    if(!mmu)mmu=autoMmu|| [...new Set(FILTERED.map(e=>e.mmu_name).filter(Boolean))].length ||1;
+    if(!days)days=autoDays|| 1;
   }
-  return null;
+  return Math.max(1,mmu*days);
 }
+function hrs(sec){return (sec||0)/3600;}
 
-function rowKeyFor(e, field) {
-  if (field === "date") return fmtDate(e.created_at);
-  return e[field] ?? "(none)";
-}
-
-function buildCompare() {
-  const rowsField = document.getElementById("cRows").value;
-  const colsField = document.getElementById("cCols").value;
-  const metric = document.getElementById("cMetric").value;
-  const chartType = document.getElementById("cChart").value;
-
-  const rowKeys = [...new Set(FILTERED.map(e => rowKeyFor(e, rowsField)))].sort();
-  const colKeys = colsField ? [...new Set(FILTERED.map(e => rowKeyFor(e, colsField)))].sort() : ["value"];
-
-  const cells = {}; // rowKey|colKey -> {durations, count, target}
-  FILTERED.forEach(e => {
-    const rk = rowKeyFor(e, rowsField);
-    const ck = colsField ? rowKeyFor(e, colsField) : "value";
-    const key = rk + "||" + ck;
-    if (!cells[key]) {
-      const tmpl = TEMPLATES.find(t => t.name === (rowsField === "step_name" ? rk : e.step_name));
-      cells[key] = { durations: [], count: 0, target: tmpl?.target_seconds };
-    }
-    cells[key].count++;
-    if (!e.skipped) cells[key].durations.push(e.duration_seconds || 0);
+function switchTab(name){
+  ["cat","drill","opp","dth","compare"].forEach(t=>{
+    document.getElementById("tab-"+t).classList.toggle("active",t===name);
+    document.getElementById("panel-"+t).classList.toggle("hidden",t!==name);
   });
-
-  // Render pivot table
-  const thead = document.getElementById("pivotTable").querySelector("thead");
-  const tbody = document.getElementById("pivotTable").querySelector("tbody");
-  thead.innerHTML = `<tr><th>${rowsField}</th>${colKeys.map(c=>`<th>${escapeHtml(String(c))}</th>`).join("")}</tr>`;
-  const dataMatrix = rowKeys.map(rk => colKeys.map(ck => metricLabel(cells[rk+"||"+ck] || {durations:[],count:0}, metric)));
-  tbody.innerHTML = rowKeys.map((rk, i) => `
-    <tr><td>${escapeHtml(String(rk))}</td>${dataMatrix[i].map(v => `<td>${v==null?'—':(metric==='efficiency'?v.toFixed(0)+'%':metric==='count'?v:fmtDuration(v))}</td>`).join("")}</tr>
-  `).join("");
-
-  // Render chart
-  const ctx = document.getElementById("compareCanvas").getContext("2d");
-  if (compareChart) compareChart.destroy();
-  if (chartType === "table") return;
-
-  const palette = ["#00843D","#0a66c2","#d97706","#7c3aed","#dc2626","#0891b2","#65a30d","#c026d3"];
-  let type = chartType === "stackedbar" ? "bar" : chartType;
-  let datasets;
-  if (chartType === "scatter") {
-    datasets = colKeys.map((ck,i) => ({
-      label: ck,
-      data: rowKeys.map((rk, ri) => ({ x: ri, y: dataMatrix[ri][i] })).filter(d=>d.y!=null),
-      backgroundColor: palette[i % palette.length]
-    }));
-  } else {
-    datasets = colKeys.map((ck, i) => ({
-      label: ck,
-      data: dataMatrix.map(row => row[i]),
-      backgroundColor: palette[i % palette.length],
-      borderColor: palette[i % palette.length],
-      fill: chartType === "line" ? false : true
-    }));
-  }
-  const options = { responsive: true, plugins: { legend: { display: colKeys.length>1 || ["pie","doughnut"].includes(chartType) } } };
-  if (chartType === "stackedbar") {
-    options.scales = { x: { stacked: true }, y: { stacked: true } };
-  }
-  compareChart = new Chart(ctx, {
-    type: type === "pie" || type === "doughnut" ? type : type,
-    data: { labels: rowKeys.map(String), datasets },
-    options
-  });
+  if(name==="drill")buildDrill();
+  if(name==="opp")buildOpp();
+  if(name==="dth")buildDth();
 }
 
-// ---------- Trend tab ----------
-function buildTrend() {
-  const step = document.getElementById("tStep").value;
-  const xAxis = document.getElementById("tXAxis").value;
-  const rows = FILTERED.filter(e => e.step_name === step && !e.skipped)
-    .sort((a,b) => xAxis === "cycle_number" ? a.cycle_number - b.cycle_number : new Date(a.created_at)-new Date(b.created_at));
-  const labels = rows.map(r => xAxis === "cycle_number" ? "Cycle " + r.cycle_number : fmtDateTime(r.created_at));
-  const data = rows.map(r => r.duration_seconds);
-  const tmpl = TEMPLATES.find(t => t.name === step);
+// ---------- Category summary ----------
+function renderCat(){
+  const groups=["task","customer","orica","other"];
+  const div=divisor();
+  const totals={}; let grand=0;
+  groups.forEach(g=>totals[g]={hrs:0,count:0});
+  FILTERED.forEach(e=>{ const g=e.category_group||"task"; if(!totals[g])totals[g]={hrs:0,count:0}; if(!e.skipped){totals[g].hrs+=hrs(e.duration_seconds);grand+=hrs(e.duration_seconds);} totals[g].count++; });
 
-  const ctx = document.getElementById("trendCanvas").getContext("2d");
-  if (trendChart) trendChart.destroy();
-  const datasets = [{ label: step + " — actual (s)", data, borderColor: "#00843D", backgroundColor: "#00843D33", fill: false, tension: .25 }];
-  if (tmpl?.target_seconds) {
-    datasets.push({ label: "Target (s)", data: rows.map(()=>tmpl.target_seconds), borderColor: "#dc2626", borderDash: [6,4], pointRadius: 0 });
-  }
-  trendChart = new Chart(ctx, { type: "line", data: { labels, datasets }, options: { responsive: true } });
+  document.getElementById("statTiles").innerHTML=groups.map(g=>{
+    const m=window.CATEGORY_META[g];
+    return `<div class="stat"><div class="num" style="color:${m.color};">${totals[g].hrs.toFixed(1)}</div><div class="lbl">${m.label}<br>${(totals[g].hrs/div).toFixed(2)} hrs/MMU/day</div></div>`;
+  }).join("")+`<div class="stat"><div class="num">${grand.toFixed(1)}</div><div class="lbl">Total hrs<br>${(grand/div).toFixed(2)} hrs/MMU/day</div></div>`;
+
+  document.getElementById("catTable").innerHTML=groups.map(g=>{
+    const m=window.CATEGORY_META[g];
+    const pct=grand? (totals[g].hrs/grand*100):0;
+    return `<tr><td><span class="badge cat-${g}">${m.label}</span></td><td>${totals[g].count}</td><td>${totals[g].hrs.toFixed(2)}</td><td>${(totals[g].hrs/div).toFixed(2)}</td><td>${pct.toFixed(1)}%</td></tr>`;
+  }).join("");
+
+  const labels=groups.map(g=>window.CATEGORY_META[g].label);
+  const colors=groups.map(g=>window.CATEGORY_META[g].color);
+  drawChart("catPie","pie",labels,[{data:groups.map(g=>+totals[g].hrs.toFixed(2)),backgroundColor:colors}],{plugins:{legend:{position:"bottom"}}});
+  drawChart("catBar","bar",labels,[{label:"hrs/MMU/day",data:groups.map(g=>+(totals[g].hrs/div).toFixed(2)),backgroundColor:colors}],{plugins:{legend:{display:false}}});
+}
+
+// ---------- Drill-down ----------
+function buildDrill(){
+  const cat=document.getElementById("drillCat").value;
+  const div=divisor();
+  const rows=FILTERED.filter(e=>(e.category_group||"task")===cat);
+  const byKey={};
+  rows.forEach(e=>{
+    const key=(e.parent_step_name||e.step_name)+(e.element_name?" › "+e.element_name:"");
+    byKey[key]=byKey[key]||{activity:e.parent_step_name||e.step_name,element:e.element_name||"",hrs:0,count:0};
+    if(!e.skipped)byKey[key].hrs+=hrs(e.duration_seconds); byKey[key].count++;
+  });
+  const arr=Object.entries(byKey).map(([k,v])=>({k,...v})).sort((a,b)=>b.hrs-a.hrs);
+  document.getElementById("drillTitle").textContent=window.CATEGORY_META[cat].label+" breakdown";
+  document.getElementById("drillTable").innerHTML=arr.map(r=>`<tr><td>${escapeHtml(r.activity)}</td><td>${escapeHtml(r.element)}</td><td>${r.count}</td><td>${r.hrs.toFixed(2)}</td><td>${(r.hrs/div).toFixed(2)}</td></tr>`).join("")||`<tr><td colspan="5" class="muted">No data.</td></tr>`;
+  const palette=["#0093D1","#003366","#d97706","#dc2626","#5b3fa8","#0891b2","#65a30d","#c026d3","#0079ad","#e08a00"];
+  drawChart("drillPie","doughnut",arr.map(r=>r.k),[{data:arr.map(r=>+r.hrs.toFixed(2)),backgroundColor:arr.map((_,i)=>palette[i%palette.length])}],{plugins:{legend:{position:"bottom",labels:{font:{size:10}}}}});
+}
+
+// ---------- Opportunity ----------
+function buildOpp(){
+  const div=divisor();
+  const opp=FILTERED.filter(e=>e.is_opportunity&&!e.skipped);
+  const byType={planning:0,resourcing:0,other:0};
+  opp.forEach(e=>{byType[e.opportunity_type||"other"]+=hrs(e.duration_seconds);});
+  const totalOpp=Object.values(byType).reduce((a,b)=>a+b,0);
+  document.getElementById("oppTiles").innerHTML=
+    Object.entries(byType).map(([k,v])=>`<div class="stat"><div class="num">${(v/div).toFixed(2)}</div><div class="lbl">Opportunity: ${k}<br>${v.toFixed(1)} hrs total</div></div>`).join("")+
+    `<div class="stat"><div class="num" style="color:var(--orica-cerulean);">${(totalOpp/div).toFixed(2)}</div><div class="lbl">Total opportunity<br>hrs/MMU/day</div></div>`;
+  drawChart("oppBar","bar",["Planning","Resourcing","Other"],[{label:"hrs/MMU/day",data:[byType.planning/div,byType.resourcing/div,byType.other/div].map(v=>+v.toFixed(2)),backgroundColor:["#0093D1","#00A651","#5b3fa8"]}],{plugins:{legend:{display:false}}});
+}
+
+// ---------- DTH dual axis ----------
+function buildDth(){
+  const byDate={};
+  FILTERED.forEach(e=>{
+    const d=fmtDate(e.created_at);
+    byDate[d]=byDate[d]||{delayHrs:0,dth:0,seenRuns:new Set()};
+    const g=e.category_group||"task";
+    if((g==="customer"||g==="orica")&&!e.skipped)byDate[d].delayHrs+=hrs(e.duration_seconds);
+    const t=parseFloat(e.dth_tonnes)|| parseFloat(e._run?.dth_tonnes)||0;
+    if(t&&!byDate[d].seenRuns.has(e.run_id)){byDate[d].dth+=t;byDate[d].seenRuns.add(e.run_id);}
+  });
+  const dates=Object.keys(byDate).sort((a,b)=>new Date(a)-new Date(b));
+  drawChart("dthChart","bar",dates,[
+    {type:"bar",label:"Delay hrs",data:dates.map(d=>+byDate[d].delayHrs.toFixed(2)),backgroundColor:"#d97706",yAxisID:"y"},
+    {type:"line",label:"Tonnes DTH",data:dates.map(d=>byDate[d].dth),borderColor:"#0093D1",backgroundColor:"#0093D1",yAxisID:"y1",tension:.25}
+  ],{scales:{y:{position:"left",title:{display:true,text:"Delay hrs"}},y1:{position:"right",title:{display:true,text:"Tonnes DTH"},grid:{drawOnChartArea:false}}}});
+}
+
+// ---------- Compare builder ----------
+function keyFor(e,f){ if(f==="date")return fmtDate(e.created_at); return e[f]??"(none)"; }
+function buildCompare(){
+  const rf=document.getElementById("cRows").value, metric=document.getElementById("cMetric").value, ct=document.getElementById("cChart").value;
+  const div=divisor();
+  const cells={};
+  FILTERED.forEach(e=>{ const k=keyFor(e,rf); cells[k]=cells[k]||{durs:[],count:0,hrs:0}; cells[k].count++; if(!e.skipped){cells[k].durs.push(e.duration_seconds||0);cells[k].hrs+=hrs(e.duration_seconds);} });
+  const keys=Object.keys(cells).sort();
+  const val=k=>{const c=cells[k]; if(metric==="count")return c.count; if(metric==="total")return c.durs.reduce((a,b)=>a+b,0); if(metric==="hrsday")return +(c.hrs/div).toFixed(2); const a=c.durs.length?c.durs.reduce((x,y)=>x+y,0)/c.durs.length:0; return a;};
+  const thead=document.getElementById("pivotTable").querySelector("thead"), tbody=document.getElementById("pivotTable").querySelector("tbody");
+  thead.innerHTML=`<tr><th>${rf}</th><th>${metric}</th></tr>`;
+  tbody.innerHTML=keys.map(k=>{const v=val(k); const disp=(metric==="count"||metric==="hrsday")?v:(metric==="total"?fmtDuration(v):fmtDuration(v)); return `<tr><td>${escapeHtml(String(k))}</td><td>${disp}</td></tr>`;}).join("");
+  if(ct==="table"){drawChart("compareCanvas","bar",[],[],{});return;}
+  const palette=["#0093D1","#003366","#d97706","#dc2626","#5b3fa8","#0891b2","#65a30d","#c026d3"];
+  drawChart("compareCanvas",ct,keys.map(String),[{label:metric,data:keys.map(val),backgroundColor:keys.map((_,i)=>palette[i%palette.length]),borderColor:"#0093D1",fill:ct==="line"?false:true}],{plugins:{legend:{display:["pie","doughnut"].includes(ct)}}});
+}
+
+// ---------- chart helper ----------
+function drawChart(id,type,labels,datasets,opts){
+  const ctx=document.getElementById(id).getContext("2d");
+  if(charts[id])charts[id].destroy();
+  charts[id]=new Chart(ctx,{type:type==="table"?"bar":type,data:{labels,datasets},options:Object.assign({responsive:true,maintainAspectRatio:true},opts||{})});
 }
 
 boot();
