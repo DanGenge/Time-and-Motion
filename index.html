@@ -100,14 +100,14 @@
 <script>
 /** Simple brand-only bar for the logged-out login screen. */
 function renderSimpleTopbar() {
-  document.getElementById("topbar-container").innerHTML = `
-    <div class="topbar">
-      <div class="brand">
-        <span class="brand-logo"><img src="img/orica-logo.png" alt="Orica"></span>
-        <span class="product">Time &amp; Motion Tracker</span>
-      </div>
-    </div>
-    <div class="brand-accent"></div>`;
+  document.getElementById("topbar-container").innerHTML =
+    '<div class="topbar">' +
+      '<div class="brand">' +
+        '<span class="brand-logo"><img src="img/orica-logo.png" alt="Orica"></span>' +
+        '<span class="product">Time &amp; Motion Tracker</span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="brand-accent"></div>';
 }
 
 function switchTab(tab) {
