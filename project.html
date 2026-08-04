@@ -131,6 +131,26 @@ async function createRun(){
   if(error)return toast(error.message,"error");
   window.location.href=`tracker.html?project=${PROJECT_ID}&run=${data.id}`;
 }
+
+// ---- Delete a run (and its entries) with a clear confirmation ----
+async function deleteRun(runId, runName){
+  // count entries so the user knows exactly what they're removing
+  const { count } = await sb.from("entries").select("id",{count:"exact",head:true}).eq("run_id",runId);
+  const n = count || 0;
+  const msg = n>0
+    ? `Delete "${runName}"?\n\nThis permanently removes the run AND its ${n} recorded ${n===1?'entry':'entries'}. This cannot be undone.`
+    : `Delete "${runName}"?\n\nThis run has no entries yet. This cannot be undone.`;
+  if(!confirm(msg)) return;
+
+  // delete child entries first (safe even if DB cascade exists), then the run
+  const { error: eErr } = await sb.from("entries").delete().eq("run_id",runId);
+  if(eErr) return toast(eErr.message,"error");
+  const { error } = await sb.from("study_runs").delete().eq("id",runId);
+  if(error) return toast(error.message,"error");
+  toast(`"${runName}" deleted`);
+  loadRuns();
+}
+
 async function loadRuns(){
   const {data,error}=await sb.from("study_runs").select("*").eq("project_id",PROJECT_ID).order("started_at",{ascending:false});
   if(error)return;
@@ -142,7 +162,10 @@ async function loadRuns(){
         <div style="font-weight:600;">${escapeHtml(r.run_name)} ${r.status==='active'?'<span class="badge online">active</span>':''}</div>
         <div class="muted" style="font-size:12px;">${escapeHtml(r.blast_name||'')} ${r.asset_name?'· '+escapeHtml(r.asset_name):''} ${r.mmu_count?'· '+r.mmu_count+' MMUs':''} ${r.observation_days?'× '+r.observation_days+'d':''} ${r.dth_tonnes?'· '+r.dth_tonnes+'t DTH':''} · ${fmtDateTime(r.started_at)}</div>
       </div>
-      <button class="small" onclick="window.location.href='tracker.html?project=${PROJECT_ID}&run=${r.id}'">${r.status==='active'?'Continue':'View'} →</button>
+      <div class="row" style="gap:6px;">
+        <button class="small" onclick="window.location.href='tracker.html?project=${PROJECT_ID}&run=${r.id}'">${r.status==='active'?'Continue':'View'} →</button>
+        <button class="small danger" title="Delete this run" onclick='deleteRun("${r.id}", ${JSON.stringify(r.run_name)})'>🗑 Delete</button>
+      </div>
     </div>`).join("");
 }
 boot();
