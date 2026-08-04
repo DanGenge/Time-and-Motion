@@ -1,0 +1,73 @@
+TIME & MOTION TRACKER — Editable & Custom Categories (Badges)
+=============================================================
+What this adds:
+ • Edit the 4 built-in badges (Task / Customer / Orica / Other) —
+   rename them and change their colours to whatever you like.
+ • Create your OWN categories (e.g. Glencore, Dyno, Contractor) with
+   a custom label + colour.
+ • Each custom category "rolls up" under one of the 4 reporting groups
+   (Task/Customer/Orica/Other) so Reports & the hrs/MMU/day charts keep
+   working exactly as before — nothing in analytics breaks.
+ • Badges show your labels/colours on the Tracker cards, the guided
+   sequence, and the recent-activity feed.
+ • Every recorded entry snapshots its badge, so old data keeps its look
+   even if you later rename/recolour/delete a category.
+
+====================================================================
+STEP 1 — RUN THE MIGRATION (once)  ~15 seconds
+====================================================================
+1. Supabase Dashboard -> SQL Editor -> New query
+2. Paste ALL of  sql/migration_v4.sql  -> Run
+3. Expect "Success. No rows returned."  (Additive only.)
+
+====================================================================
+STEP 2 — COPY FILES INTO YOUR CLONED REPO (GitHub Desktop)
+====================================================================
+Overwrite / add:
+
+  ROOT (overwrite):
+    templates.html
+    tracker.html
+
+  js\ (ADD the new one, overwrite the other):
+    categories.js       (NEW FILE — add this)
+    activityLibrary.js  (overwrite — same as buckets update; safe to re-copy)
+
+  sql\ (add):
+    migration_v4.sql
+
+DO NOT TOUCH:
+    js\config.js  (your live keys)
+    everything else you already have
+
+====================================================================
+STEP 3 — COMMIT & PUSH (GitHub Desktop)
+====================================================================
+  Summary: "Editable + custom categories"
+  Commit to main -> Push origin   (Netlify redeploys ~30 sec)
+
+====================================================================
+STEP 4 — USE IT
+====================================================================
+Templates page:
+ • Click the "🎨 Categories" button (top of the page).
+ • Recolour any category with its colour swatch; rename by typing.
+ • The 4 built-ins can be edited but not deleted; their reporting
+   group is locked (keeps Reports stable).
+ • "+ Add category": type a label (e.g. Glencore), pick a colour, and
+   choose which reporting group it rolls up under (usually Customer),
+   then Add.
+ • When adding/editing an activity, the "Category (badge)" dropdown now
+   lists all your categories — pick any of them.
+
+Tracker page:
+ • Activity cards, the guided sequence header, and the feed all show
+   your custom badge labels & colours.
+
+Notes:
+ • Existing activities keep working; they map to the matching built-in
+   badge until you assign a custom one.
+ • Reports still groups by the 4 reporting groups (a "Glencore" badge
+   that rolls up under Customer counts toward Customer in the charts).
+   Say the word if you'd like Reports to also break out by custom
+   category label — easy follow-up.

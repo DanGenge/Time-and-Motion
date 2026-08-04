@@ -14,6 +14,7 @@
 <script src="js/supabaseClient.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/auth.js"></script>
+<script src="js/categories.js"></script>
 <script src="js/activityLibrary.js"></script>
 <style>
   .bucket-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden;}
@@ -32,6 +33,13 @@
   .bucket-list.drop-empty{border:2px dashed var(--border);border-radius:10px;color:var(--muted);font-size:12px;text-align:center;padding:14px;}
   .arrows{display:flex;flex-direction:column;gap:2px;}
   .arrows button{padding:2px 7px;font-size:11px;line-height:1.1;}
+  /* category manager */
+  .cat-manager{display:none;}
+  .cat-manager.open{display:block;}
+  .cat-row{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;}
+  .cat-swatch{width:22px;height:22px;border-radius:6px;border:1px solid rgba(0,0,0,.1);padding:0;cursor:pointer;}
+  .cat-row input[type=text]{flex:1;min-width:100px;}
+  .cat-row select{max-width:150px;}
 </style>
 </head>
 <body>
@@ -41,14 +49,33 @@
 <div class="wrap">
   <div class="card">
     <div class="row between">
-      <h2 class="mb0">Activities &amp; buckets</h2>
+      <h2 class="mb0">Activities, buckets &amp; categories</h2>
       <div class="row">
+        <button class="small secondary" onclick="toggleCatManager()">🎨 Categories</button>
         <button class="small secondary" onclick="seedLibrary()">⬇ Load standard MMU library</button>
         <button class="small secondary" onclick="newBucket()">+ New bucket</button>
         <button class="small" onclick="openNewStep()">+ New activity</button>
       </div>
     </div>
-    <p class="muted" style="font-size:13px;">Drag the <strong>⠿</strong> handle to reorder — top-to-bottom is your logical shift sequence. Drag activities between buckets, or use the ↑ ↓ arrows. Create your own buckets (e.g. MMU, On-bench). Each activity keeps its accountability category (Task / Customer / Orica / Other) shown as a colour badge.</p>
+    <p class="muted" style="font-size:13px;">Drag the <strong>⠿</strong> handle to reorder (top-to-bottom = your logical sequence) or use the ↑ ↓ arrows. Create <strong>buckets</strong> to group activities, and edit or create your own coloured <strong>categories</strong> (Customer, Glencore, Dyno…).</p>
+
+    <!-- Category manager -->
+    <div id="catManager" class="cat-manager mt16">
+      <h3>Badge categories</h3>
+      <p class="muted" style="font-size:12px;">Rename or recolour any category. Create your own — each custom one rolls up under a reporting group (Task / Customer / Orica / Other) so Reports stays consistent. The 4 built-ins can be edited but not deleted.</p>
+      <div id="catList"></div>
+      <div class="row mt8">
+        <input id="newCatLabel" placeholder="New category label, e.g. Glencore" style="flex:2;">
+        <input type="color" id="newCatColor" value="#00A651" class="cat-swatch" style="width:36px;height:36px;">
+        <select id="newCatGroup">
+          <option value="task">rolls up: Task</option>
+          <option value="customer" selected>rolls up: Customer</option>
+          <option value="orica">rolls up: Orica</option>
+          <option value="other">rolls up: Other</option>
+        </select>
+        <button class="small" onclick="addCategory()">+ Add category</button>
+      </div>
+    </div>
   </div>
 
   <!-- New / edit activity -->
@@ -57,19 +84,8 @@
     <input type="hidden" id="editId">
     <div class="grid cols-3">
       <div class="field"><label>Activity name</label><input id="stName" placeholder="e.g. Loading Blast Holes"></div>
-      <div class="field">
-        <label>Bucket</label>
-        <select id="stBucket"></select>
-      </div>
-      <div class="field">
-        <label>Category (accountability)</label>
-        <select id="stCategory">
-          <option value="task">Task (Orica productive)</option>
-          <option value="customer">Customer Delay</option>
-          <option value="orica">Orica Delay</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
+      <div class="field"><label>Bucket</label><select id="stBucket"></select></div>
+      <div class="field"><label>Category (badge)</label><select id="stCategory"></select></div>
       <div class="field"><label>Activity code (optional)</label><input id="stCode" placeholder="e.g. 7"></div>
       <div class="field"><label>Target/standard time (seconds, optional)</label><input type="number" id="stTarget" placeholder="e.g. 90"></div>
     </div>
@@ -81,7 +97,6 @@
         <input id="elInput" placeholder="e.g. Reloading EP Bin 1" style="flex:2;">
         <button class="small secondary" onclick="addElementRow()">+ Add element</button>
       </div>
-      <p class="muted" style="font-size:12px;margin-top:4px;">On the Tracker, an activity with elements becomes a one-tap-to-advance sequence.</p>
     </div>
 
     <div class="row">
@@ -90,21 +105,18 @@
     </div>
   </div>
 
-  <!-- The board: buckets stacked vertically -->
   <div id="board"></div>
 </div>
 
 <script>
 let PROJECT_ID = getParam("project");
-let STEPS = [];        // all step_templates rows
-let BUCKETS = [];      // bucket rows
-let ELEMENTS_DRAFT = [];
-let sortableInstances = [];
+let STEPS = [], BUCKETS = [], ELEMENTS_DRAFT = [], sortableInstances = [];
 
 async function boot(){
   if(!PROJECT_ID){ window.location.href="index.html"; return; }
   const user = await requireAuth(); if(!user) return;
   await renderTopbar("templates", user);
+  await CategoryStore.load(PROJECT_ID);
   await loadAll();
 }
 
@@ -113,43 +125,75 @@ async function loadAll(){
     sb.from("buckets").select("*").eq("project_id",PROJECT_ID).order("sort_order"),
     sb.from("step_templates").select("*").eq("project_id",PROJECT_ID).order("sort_order")
   ]);
-  BUCKETS = bk||[];
-  STEPS = st||[];
-  fillBucketDropdown();
-  renderBoard();
+  BUCKETS = bk||[]; STEPS = st||[];
+  fillBucketDropdown(); fillCategoryDropdown(); renderCatManager(); renderBoard();
 }
 
 function fillBucketDropdown(){
-  const sel=document.getElementById("stBucket");
-  sel.innerHTML = BUCKETS.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join("") + `<option value="">— Unsorted —</option>`;
+  document.getElementById("stBucket").innerHTML =
+    BUCKETS.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join("") + `<option value="">— Unsorted —</option>`;
+}
+function fillCategoryDropdown(){
+  document.getElementById("stCategory").innerHTML =
+    CategoryStore.list.map(c=>`<option value="${c.id}">${escapeHtml(c.label)}${c.is_builtin?'':' (custom)'}</option>`).join("");
+}
+
+// ---------------- Category manager ----------------
+function toggleCatManager(){ document.getElementById("catManager").classList.toggle("open"); }
+function renderCatManager(){
+  const el=document.getElementById("catList");
+  el.innerHTML = CategoryStore.list.map(c=>`
+    <div class="cat-row">
+      <input type="color" class="cat-swatch" value="${c.color}" onchange="updateCategory('${c.id}',{color:this.value})">
+      <input type="text" value="${escapeHtml(c.label)}" onchange="updateCategory('${c.id}',{label:this.value})">
+      <select onchange="updateCategory('${c.id}',{report_group:this.value})" ${c.is_builtin?'disabled title="Built-in reporting group is fixed"':''}>
+        ${["task","customer","orica","other"].map(g=>`<option value="${g}" ${c.report_group===g?'selected':''}>rolls up: ${g.charAt(0).toUpperCase()+g.slice(1)}</option>`).join("")}
+      </select>
+      <span style="min-width:70px;text-align:center;">${catBadgeHtml(c)}</span>
+      ${c.is_builtin?`<span class="muted" style="font-size:11px;">built-in</span>`:`<button class="danger small" onclick="deleteCategory('${c.id}')">Delete</button>`}
+    </div>`).join("");
+}
+async function addCategory(){
+  const label=document.getElementById("newCatLabel").value.trim();
+  const color=document.getElementById("newCatColor").value;
+  const group=document.getElementById("newCatGroup").value;
+  if(!label)return toast("Enter a category label","error");
+  const {error}=await sb.from("categories").insert({project_id:PROJECT_ID,label,color,report_group:group,is_builtin:false,sort_order:CategoryStore.list.length});
+  if(error)return toast(error.message,"error");
+  document.getElementById("newCatLabel").value="";
+  toast("Category added");
+  await CategoryStore.load(PROJECT_ID); loadAll();
+}
+async function updateCategory(id,patch){
+  const {error}=await sb.from("categories").update(patch).eq("id",id);
+  if(error)return toast(error.message,"error");
+  await CategoryStore.load(PROJECT_ID); fillCategoryDropdown(); renderCatManager(); renderBoard();
+}
+async function deleteCategory(id){
+  const used = STEPS.filter(s=>s.category_id===id).length;
+  if(!confirm(used?`Delete this category? ${used} activities using it fall back to their reporting group's default badge.`:"Delete this category?"))return;
+  await sb.from("categories").delete().eq("id",id);
+  await CategoryStore.load(PROJECT_ID); loadAll();
 }
 
 // ---------------- Buckets ----------------
 async function newBucket(){
-  const name = prompt("New bucket name (e.g. MMU, On-bench, Reload):");
-  if(!name) return;
-  const order = BUCKETS.length;
-  const {error} = await sb.from("buckets").insert({project_id:PROJECT_ID,name:name.trim(),sort_order:order});
-  if(error) return toast(error.message,"error");
+  const name=prompt("New bucket name (e.g. MMU, On-bench, Reload):"); if(!name)return;
+  const {error}=await sb.from("buckets").insert({project_id:PROJECT_ID,name:name.trim(),sort_order:BUCKETS.length});
+  if(error)return toast(error.message,"error");
   toast("Bucket created"); loadAll();
 }
-async function renameBucket(id,newName){
-  newName=(newName||"").trim(); if(!newName) return;
-  await sb.from("buckets").update({name:newName}).eq("id",id);
-}
+async function renameBucket(id,newName){ newName=(newName||"").trim(); if(!newName)return; await sb.from("buckets").update({name:newName}).eq("id",id); }
 async function deleteBucket(id){
-  const kids = STEPS.filter(s=>!s.parent_id && s.bucket_id===id).length;
-  if(!confirm(kids?`Delete this bucket? Its ${kids} activities move to "Unsorted" (nothing is lost).`:"Delete this empty bucket?")) return;
-  await sb.from("buckets").delete().eq("id",id);   // step_templates.bucket_id set null via FK
-  toast("Bucket deleted"); loadAll();
+  const kids=STEPS.filter(s=>!s.parent_id&&s.bucket_id===id).length;
+  if(!confirm(kids?`Delete this bucket? Its ${kids} activities move to "Unsorted".`:"Delete this empty bucket?"))return;
+  await sb.from("buckets").delete().eq("id",id); toast("Bucket deleted"); loadAll();
 }
 async function moveBucket(id,dir){
-  const idx=BUCKETS.findIndex(b=>b.id===id); const j=idx+dir;
-  if(j<0||j>=BUCKETS.length) return;
-  const a=BUCKETS[idx], b=BUCKETS[j];
+  const idx=BUCKETS.findIndex(b=>b.id===id); const j=idx+dir; if(j<0||j>=BUCKETS.length)return;
+  const a=BUCKETS[idx],b=BUCKETS[j];
   await sb.from("buckets").update({sort_order:b.sort_order}).eq("id",a.id);
-  await sb.from("buckets").update({sort_order:a.sort_order}).eq("id",b.id);
-  loadAll();
+  await sb.from("buckets").update({sort_order:a.sort_order}).eq("id",b.id); loadAll();
 }
 async function persistBucketOrder(){
   const ids=[...document.querySelectorAll("#board [data-bucket-card]")].map(el=>el.dataset.bucketCard);
@@ -158,36 +202,33 @@ async function persistBucketOrder(){
 
 // ---------------- Activities: reorder / move ----------------
 async function persistList(listEl){
-  const bucketId = listEl.dataset.bucket;           // '' or 'null' means unsorted
-  const ids = [...listEl.querySelectorAll("[data-step]")].map(el=>el.dataset.step);
-  for(let i=0;i<ids.length;i++){
-    await sb.from("step_templates").update({ sort_order:i, bucket_id: (bucketId&&bucketId!=="null")?bucketId:null }).eq("id",ids[i]);
-  }
+  const bucketId=listEl.dataset.bucket;
+  const ids=[...listEl.querySelectorAll("[data-step]")].map(el=>el.dataset.step);
+  for(let i=0;i<ids.length;i++){ await sb.from("step_templates").update({sort_order:i,bucket_id:(bucketId&&bucketId!=="null")?bucketId:null}).eq("id",ids[i]); }
 }
 async function moveActivity(id,dir){
   const step=STEPS.find(s=>s.id===id);
-  const siblings=STEPS.filter(s=>!s.parent_id && (s.bucket_id||null)===(step.bucket_id||null)).sort((a,b)=>a.sort_order-b.sort_order);
-  const idx=siblings.findIndex(s=>s.id===id); const j=idx+dir;
-  if(j<0||j>=siblings.length) return;
-  const a=siblings[idx], b=siblings[j];
+  const sib=STEPS.filter(s=>!s.parent_id&&(s.bucket_id||null)===(step.bucket_id||null)).sort((a,b)=>a.sort_order-b.sort_order);
+  const idx=sib.findIndex(s=>s.id===id); const j=idx+dir; if(j<0||j>=sib.length)return;
+  const a=sib[idx],b=sib[j];
   await sb.from("step_templates").update({sort_order:b.sort_order}).eq("id",a.id);
-  await sb.from("step_templates").update({sort_order:a.sort_order}).eq("id",b.id);
-  loadAll();
+  await sb.from("step_templates").update({sort_order:a.sort_order}).eq("id",b.id); loadAll();
 }
 
 // ---------------- New/edit activity ----------------
 function openNewStep(step){
   document.getElementById("newStepCard").classList.remove("hidden");
-  document.getElementById("editHeading").textContent = step?"Edit activity":"New activity";
-  document.getElementById("editId").value = step?.id||"";
-  document.getElementById("stName").value = step?.name||"";
-  document.getElementById("stCategory").value = step?.category_group||"task";
-  document.getElementById("stBucket").value = step?.bucket_id||"";
-  document.getElementById("stCode").value = step?.activity_code||"";
-  document.getElementById("stTarget").value = step?.target_seconds||"";
+  document.getElementById("editHeading").textContent=step?"Edit activity":"New activity";
+  document.getElementById("editId").value=step?.id||"";
+  document.getElementById("stName").value=step?.name||"";
+  document.getElementById("stBucket").value=step?.bucket_id||"";
+  // resolve category: explicit id, else map from legacy report group
+  const cat = step ? (CategoryStore.get(step.category_id)||CategoryStore.byReportGroup(step.category_group||"task")) : CategoryStore.byReportGroup("task");
+  document.getElementById("stCategory").value = cat?cat.id:"";
+  document.getElementById("stCode").value=step?.activity_code||"";
+  document.getElementById("stTarget").value=step?.target_seconds||"";
   ELEMENTS_DRAFT = step? STEPS.filter(s=>s.parent_id===step.id).sort((a,b)=>a.sort_order-b.sort_order).map(e=>e.name):[];
-  renderElementDraft();
-  window.scrollTo({top:0,behavior:"smooth"});
+  renderElementDraft(); window.scrollTo({top:0,behavior:"smooth"});
 }
 function closeNewStep(){ document.getElementById("newStepCard").classList.add("hidden"); ELEMENTS_DRAFT=[]; }
 function addElementRow(){ const v=document.getElementById("elInput").value.trim(); if(!v)return; ELEMENTS_DRAFT.push(v); document.getElementById("elInput").value=""; renderElementDraft(); }
@@ -209,12 +250,14 @@ function renderElementDraft(){
 async function saveStep(){
   const id=document.getElementById("editId").value;
   const name=document.getElementById("stName").value.trim();
-  const category=document.getElementById("stCategory").value;
+  const catId=document.getElementById("stCategory").value;
   const bucket=document.getElementById("stBucket").value||null;
   const code=document.getElementById("stCode").value.trim();
   const target=document.getElementById("stTarget").value;
-  if(!name) return toast("Enter an activity name","error");
-  const payload={ name, category_group:category, step_type:category, bucket_id:bucket, activity_code:code||null, target_seconds:target?parseFloat(target):null, is_element:false, parent_id:null };
+  if(!name)return toast("Enter an activity name","error");
+  const cat=CategoryStore.get(catId);
+  const reportGroup=cat?cat.report_group:"task";
+  const payload={name,category_id:catId||null,category_group:reportGroup,step_type:reportGroup,bucket_id:bucket,activity_code:code||null,target_seconds:target?parseFloat(target):null,is_element:false,parent_id:null};
   let parentId=id;
   if(id){
     const {error}=await sb.from("step_templates").update(payload).eq("id",id);
@@ -222,15 +265,13 @@ async function saveStep(){
     await sb.from("step_templates").delete().eq("parent_id",id);
   }else{
     payload.project_id=PROJECT_ID;
-    payload.sort_order=STEPS.filter(s=>!s.parent_id && (s.bucket_id||null)===(bucket||null)).length;
+    payload.sort_order=STEPS.filter(s=>!s.parent_id&&(s.bucket_id||null)===(bucket||null)).length;
     const {data,error}=await sb.from("step_templates").insert(payload).select().single();
-    if(error)return toast(error.message,"error");
-    parentId=data.id;
+    if(error)return toast(error.message,"error"); parentId=data.id;
   }
   if(ELEMENTS_DRAFT.length){
-    const rows=ELEMENTS_DRAFT.map((nm,i)=>({project_id:PROJECT_ID,name:nm,category_group:category,step_type:category,is_element:true,parent_id:parentId,sort_order:i}));
-    const {error:e}=await sb.from("step_templates").insert(rows);
-    if(e)return toast(e.message,"error");
+    const rows=ELEMENTS_DRAFT.map((nm,i)=>({project_id:PROJECT_ID,name:nm,category_id:catId||null,category_group:reportGroup,step_type:reportGroup,is_element:true,parent_id:parentId,sort_order:i}));
+    const {error:e}=await sb.from("step_templates").insert(rows); if(e)return toast(e.message,"error");
   }
   toast("Saved!"); closeNewStep(); loadAll();
 }
@@ -238,40 +279,29 @@ async function toggleActive(id,val){ await sb.from("step_templates").update({is_
 async function deleteStep(id){
   if(!confirm("Delete this activity and its elements? Recorded entries keep their data."))return;
   await sb.from("step_templates").delete().eq("parent_id",id);
-  await sb.from("step_templates").delete().eq("id",id);
-  loadAll();
+  await sb.from("step_templates").delete().eq("id",id); loadAll();
 }
 
 // ---------------- Seed library ----------------
 async function seedLibrary(){
-  if(!window.ACTIVITY_LIBRARY) return toast("Library not loaded","error");
-  if(!confirm("Load the standard MMU library? Creates buckets (Pre-shift, Travel, Reload, On-bench, Delays…) and the full activity set with reload & loading elements. Existing items are kept.")) return;
-
-  // create buckets (dedupe by name)
-  const existingNames = new Set(BUCKETS.map(b=>b.name));
-  let order = BUCKETS.length;
-  const nameToId = {};
+  if(!window.ACTIVITY_LIBRARY)return toast("Library not loaded","error");
+  if(!confirm("Load the standard MMU library? Creates buckets + the full activity set with reload & loading elements. Existing items are kept."))return;
+  const existingNames=new Set(BUCKETS.map(b=>b.name)); let order=BUCKETS.length; const nameToId={};
   BUCKETS.forEach(b=>nameToId[b.name]=b.id);
   for(const bname of window.ACTIVITY_LIBRARY.buckets){
-    if(existingNames.has(bname)) continue;
+    if(existingNames.has(bname))continue;
     const {data,error}=await sb.from("buckets").insert({project_id:PROJECT_ID,name:bname,sort_order:order++}).select().single();
-    if(error){ toast(error.message,"error"); continue; }
-    nameToId[bname]=data.id;
+    if(error){toast(error.message,"error");continue;} nameToId[bname]=data.id;
   }
-
-  // create activities into their buckets
-  const perBucketCount = {};
+  const perBucket={};
   for(const act of window.ACTIVITY_LIBRARY.activities){
-    const bId = nameToId[act.bucket] || null;
-    perBucketCount[bId] = (perBucketCount[bId] ?? (STEPS.filter(s=>!s.parent_id && (s.bucket_id||null)===(bId||null)).length));
-    const {data,error}=await sb.from("step_templates").insert({
-      project_id:PROJECT_ID,name:act.name,category_group:act.group,step_type:act.group,
-      bucket_id:bId,activity_code:act.code||null,target_seconds:act.target||null,
-      is_element:false,parent_id:null,sort_order:perBucketCount[bId]++
-    }).select().single();
-    if(error){ toast(error.message,"error"); continue; }
+    const bId=nameToId[act.bucket]||null;
+    const cat=CategoryStore.byReportGroup(act.group);
+    perBucket[bId]=(perBucket[bId]??(STEPS.filter(s=>!s.parent_id&&(s.bucket_id||null)===(bId||null)).length));
+    const {data,error}=await sb.from("step_templates").insert({project_id:PROJECT_ID,name:act.name,category_id:cat?cat.id:null,category_group:act.group,step_type:act.group,bucket_id:bId,activity_code:act.code||null,target_seconds:act.target||null,is_element:false,parent_id:null,sort_order:perBucket[bId]++}).select().single();
+    if(error){toast(error.message,"error");continue;}
     if(act.elements&&act.elements.length){
-      const rows=act.elements.map((nm,i)=>({project_id:PROJECT_ID,name:nm,category_group:act.group,step_type:act.group,is_element:true,parent_id:data.id,sort_order:i}));
+      const rows=act.elements.map((nm,i)=>({project_id:PROJECT_ID,name:nm,category_id:cat?cat.id:null,category_group:act.group,step_type:act.group,is_element:true,parent_id:data.id,sort_order:i}));
       await sb.from("step_templates").insert(rows);
     }
   }
@@ -280,97 +310,54 @@ async function seedLibrary(){
 
 // ---------------- Render board ----------------
 function renderBoard(){
-  // destroy old sortables
-  sortableInstances.forEach(s=>{ try{s.destroy();}catch(e){} });
-  sortableInstances=[];
-
+  sortableInstances.forEach(s=>{try{s.destroy();}catch(e){}}); sortableInstances=[];
   const board=document.getElementById("board");
   const parents=STEPS.filter(s=>!s.parent_id);
-
-  if(!parents.length && !BUCKETS.length){
-    board.innerHTML=`<div class="card"><p class="muted">No activities yet. Click <strong>Load standard MMU library</strong> to preload everything, or <strong>+ New bucket</strong> then <strong>+ New activity</strong>.</p></div>`;
-    return;
+  if(!parents.length&&!BUCKETS.length){
+    board.innerHTML=`<div class="card"><p class="muted">No activities yet. Click <strong>Load standard MMU library</strong>, or <strong>+ New bucket</strong> then <strong>+ New activity</strong>.</p></div>`; return;
   }
-
-  // ordered list of buckets + a trailing "Unsorted" pseudo-bucket
-  const bucketDefs=[...BUCKETS.map(b=>({id:b.id,name:b.name})), {id:null,name:"Unsorted"}];
-
-  board.innerHTML = bucketDefs.map((bkt,bi)=>{
+  const defs=[...BUCKETS.map(b=>({id:b.id,name:b.name})),{id:null,name:"Unsorted"}];
+  board.innerHTML=defs.map((bkt,bi)=>{
     const items=parents.filter(p=>(p.bucket_id||null)===(bkt.id||null)).sort((a,b)=>a.sort_order-b.sort_order);
-    if(bkt.id===null && items.length===0) return ""; // hide empty Unsorted
-    const isReal = bkt.id!==null;
-    return `
-      <div class="bucket-card" data-bucket-card="${bkt.id===null?'null':bkt.id}">
-        <div class="bucket-head">
-          <span class="drag-handle bucket-handle" title="Drag to reorder bucket">⠿</span>
-          ${isReal
-            ? `<input class="bkt-name" value="${escapeHtml(bkt.name)}" onchange="renameBucket('${bkt.id}',this.value)">`
-            : `<span class="bkt-name" style="color:var(--muted);">${bkt.name}</span>`}
-          <span class="badge" style="background:#eef2f5;color:#5b7080;">${items.length}</span>
-          ${isReal?`
-            <span class="arrows">
-              <button class="ghost" onclick="moveBucket('${bkt.id}',-1)" ${bi===0?'disabled':''}>▲</button>
-              <button class="ghost" onclick="moveBucket('${bkt.id}',1)" ${bi>=BUCKETS.length-1?'disabled':''}>▼</button>
-            </span>
-            <button class="danger small" onclick="deleteBucket('${bkt.id}')">Delete</button>`:''}
-        </div>
-        <div class="bucket-list ${items.length?'':'drop-empty'}" data-bucket="${bkt.id===null?'null':bkt.id}">
-          ${items.length? items.map((s,i)=>activityRow(s,i,items.length)).join("") : "Drop activities here"}
-        </div>
-      </div>`;
+    if(bkt.id===null&&items.length===0)return "";
+    const isReal=bkt.id!==null;
+    return `<div class="bucket-card" data-bucket-card="${bkt.id===null?'null':bkt.id}">
+      <div class="bucket-head">
+        <span class="drag-handle bucket-handle" title="Drag to reorder bucket">⠿</span>
+        ${isReal?`<input class="bkt-name" value="${escapeHtml(bkt.name)}" onchange="renameBucket('${bkt.id}',this.value)">`:`<span class="bkt-name" style="color:var(--muted);">${bkt.name}</span>`}
+        <span class="badge" style="background:#eef2f5;color:#5b7080;">${items.length}</span>
+        ${isReal?`<span class="arrows"><button class="ghost" onclick="moveBucket('${bkt.id}',-1)" ${bi===0?'disabled':''}>▲</button><button class="ghost" onclick="moveBucket('${bkt.id}',1)" ${bi>=BUCKETS.length-1?'disabled':''}>▼</button></span><button class="danger small" onclick="deleteBucket('${bkt.id}')">Delete</button>`:''}
+      </div>
+      <div class="bucket-list ${items.length?'':'drop-empty'}" data-bucket="${bkt.id===null?'null':bkt.id}">
+        ${items.length?items.map((s,i)=>activityRow(s,i,items.length)).join(""):"Drop activities here"}
+      </div>
+    </div>`;
   }).join("");
 
-  // wire SortableJS on each bucket list (shared group for cross-bucket drag)
   document.querySelectorAll(".bucket-list").forEach(listEl=>{
-    const inst=Sortable.create(listEl,{
-      group:"activities", handle:".act-handle", animation:150,
-      ghostClass:"sortable-ghost", chosenClass:"sortable-chosen",
-      onEnd: async (evt)=>{
-        await persistList(evt.to);
-        if(evt.from!==evt.to) await persistList(evt.from);
-        loadAll();
-      }
-    });
-    sortableInstances.push(inst);
+    sortableInstances.push(Sortable.create(listEl,{group:"activities",handle:".act-handle",animation:150,ghostClass:"sortable-ghost",chosenClass:"sortable-chosen",
+      onEnd:async(evt)=>{ await persistList(evt.to); if(evt.from!==evt.to)await persistList(evt.from); loadAll(); }}));
   });
-
-  // sortable on the board itself (reorder buckets by dragging the header handle)
-  const boardSort=Sortable.create(board,{
-    handle:".bucket-handle", animation:150, draggable:"[data-bucket-card]",
-    filter:'[data-bucket-card="null"]',   // can't drag the Unsorted pseudo-bucket
-    onMove:(evt)=> evt.related?.dataset.bucketCard!=="null",
-    onEnd: async ()=>{ await persistBucketOrder(); loadAll(); }
-  });
-  sortableInstances.push(boardSort);
+  sortableInstances.push(Sortable.create(board,{handle:".bucket-handle",animation:150,draggable:"[data-bucket-card]",filter:'[data-bucket-card="null"]',
+    onMove:(evt)=>evt.related?.dataset.bucketCard!=="null", onEnd:async()=>{ await persistBucketOrder(); loadAll(); }}));
 }
 
 function activityRow(s,i,total){
   const kids=STEPS.filter(k=>k.parent_id===s.id).sort((a,b)=>a.sort_order-b.sort_order);
-  const g=s.category_group||"task";
-  return `
-    <div class="act-row" data-step="${s.id}" style="${s.is_active===false?'opacity:.5;':''}">
-      <span class="drag-handle act-handle" title="Drag to reorder / move bucket">⠿</span>
-      <span class="arrows">
-        <button class="ghost" onclick="moveActivity('${s.id}',-1)" ${i===0?'disabled':''}>▲</button>
-        <button class="ghost" onclick="moveActivity('${s.id}',1)" ${i>=total-1?'disabled':''}>▼</button>
-      </span>
-      <div class="act-main">
-        <div class="act-name">
-          <span class="badge cat-${g}">${g}</span>
-          ${s.activity_code?`<span class="muted" style="font-size:11px;">#${escapeHtml(s.activity_code)}</span> `:''}
-          ${escapeHtml(s.name)}
-        </div>
-        <div class="muted" style="font-size:12px;">
-          ${s.target_seconds?`target ${fmtDuration(s.target_seconds)} · `:''}
-          ${kids.length?`↳ ${kids.map(k=>escapeHtml(k.name)).join(" → ")}`:'single timer'}
-        </div>
-      </div>
-      <span class="row" style="gap:4px;">
-        <button class="secondary small" onclick='openNewStep(${JSON.stringify(s).replace(/'/g,"&#39;")})'>Edit</button>
-        <button class="secondary small" onclick="toggleActive('${s.id}',${!(s.is_active!==false)})">${s.is_active!==false?'Disable':'Enable'}</button>
-        <button class="danger small" onclick="deleteStep('${s.id}')">Delete</button>
-      </span>
-    </div>`;
+  const cat=CategoryStore.forStep(s);
+  return `<div class="act-row" data-step="${s.id}" style="${s.is_active===false?'opacity:.5;':''}">
+    <span class="drag-handle act-handle" title="Drag to reorder / move bucket">⠿</span>
+    <span class="arrows"><button class="ghost" onclick="moveActivity('${s.id}',-1)" ${i===0?'disabled':''}>▲</button><button class="ghost" onclick="moveActivity('${s.id}',1)" ${i>=total-1?'disabled':''}>▼</button></span>
+    <div class="act-main">
+      <div class="act-name">${catBadgeHtml(cat)} ${s.activity_code?`<span class="muted" style="font-size:11px;">#${escapeHtml(s.activity_code)}</span> `:''}${escapeHtml(s.name)}</div>
+      <div class="muted" style="font-size:12px;">${s.target_seconds?`target ${fmtDuration(s.target_seconds)} · `:''}${kids.length?`↳ ${kids.map(k=>escapeHtml(k.name)).join(" → ")}`:'single timer'}</div>
+    </div>
+    <span class="row" style="gap:4px;">
+      <button class="secondary small" onclick='openNewStep(${JSON.stringify(s).replace(/'/g,"&#39;")})'>Edit</button>
+      <button class="secondary small" onclick="toggleActive('${s.id}',${!(s.is_active!==false)})">${s.is_active!==false?'Disable':'Enable'}</button>
+      <button class="danger small" onclick="deleteStep('${s.id}')">Delete</button>
+    </span>
+  </div>`;
 }
 
 boot();

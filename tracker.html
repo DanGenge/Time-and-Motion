@@ -14,6 +14,7 @@
 <script src="js/utils.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/presence.js"></script>
+<script src="js/categories.js"></script>
 <script src="js/activityLibrary.js"></script>
 <style>
   .bucket-section h3{display:flex;align-items:center;gap:8px;}
@@ -59,7 +60,7 @@
   <!-- Guided sequence panel -->
   <div id="sequencePanel" class="card hidden" style="border-color:var(--orica-cerulean);box-shadow:0 0 0 3px rgba(0,147,209,.15);">
     <div class="row between">
-      <div><span class="badge" id="seqBadge">task</span> <span id="seqActivity" style="font-weight:700;font-size:16px;"></span></div>
+      <div><span id="seqBadge"></span> <span id="seqActivity" style="font-weight:700;font-size:16px;"></span></div>
       <button class="small secondary" onclick="cancelSequence()">✕ Close</button>
     </div>
     <div class="step-timer" id="seqTimer" style="font-size:40px;">00:00</div>
@@ -76,19 +77,17 @@
     <div class="last-entries mt8" id="seqLog"></div>
   </div>
 
-  <!-- Activity board grouped by bucket -->
   <div id="activityGroups"></div>
 
   <div class="card">
     <h3>Recent activity (all users)</h3>
     <div class="table-wrap"><table>
-      <thead><tr><th>Time</th><th>MMU</th><th>Activity</th><th>Element</th><th>Cat</th><th>Cycle</th><th>By</th><th>Dur</th><th>Q</th></tr></thead>
+      <thead><tr><th>Time</th><th>MMU</th><th>Activity</th><th>Element</th><th>Category</th><th>Cycle</th><th>By</th><th>Dur</th><th>Q</th></tr></thead>
       <tbody id="feedBody"></tbody>
     </table></div>
   </div>
 </div>
 
-<!-- Detail modal -->
 <div id="detailModal" class="card hidden" style="position:fixed;top:12%;left:50%;transform:translateX(-50%);z-index:200;max-width:420px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,.3);">
   <h3>Entry saved</h3>
   <div class="field"><label>Note (optional)</label><textarea id="detailNote" placeholder="e.g. hose jumped outside reel"></textarea></div>
@@ -110,6 +109,7 @@ async function boot(){
   if(!PROJECT_ID||!RUN_ID){window.location.href="index.html";return;}
   CURRENT_USER=await requireAuth(); if(!CURRENT_USER)return;
   await renderTopbar("tracker",CURRENT_USER);
+  await CategoryStore.load(PROJECT_ID);
   await loadRun(); await loadSteps();
   startPresence(PROJECT_ID,CURRENT_USER,u=>renderPresenceBar("presenceBar",u));
   await syncNow(); setInterval(syncNow,window.APP_CONFIG.AUTO_REFRESH_MS||5000);
@@ -141,26 +141,23 @@ async function loadSteps(){
   renderGroups();
 }
 
-function badgeClass(g){ return "cat-"+(g||"task"); }
-
 function renderGroups(){
   const container=document.getElementById("activityGroups");
   if(!STEPS.length){
-    container.innerHTML=`<div class="card"><p class="muted">No active activities. Go to <a href="templates.html?project=${PROJECT_ID}">Templates</a> → Load standard MMU library.</p></div>`;
-    return;
+    container.innerHTML=`<div class="card"><p class="muted">No active activities. Go to <a href="templates.html?project=${PROJECT_ID}">Templates</a> → Load standard MMU library.</p></div>`; return;
   }
   const sections=[...BUCKETS.map(b=>({id:b.id,name:b.name})),{id:null,name:"Unsorted"}];
   container.innerHTML=sections.map(sec=>{
     const items=STEPS.filter(s=>(s.bucket_id||null)===(sec.id||null)).sort((a,b)=>a.sort_order-b.sort_order);
-    if(!items.length) return "";
+    if(!items.length)return "";
     return `<div class="card bucket-section">
       <h3><span class="bkt-dot"></span>${escapeHtml(sec.name)}</h3>
       <div class="grid cols-3">
         ${items.map(s=>{
-          const hasEl=(ELEMENTS[s.id]||[]).length>0; const g=s.category_group||"task";
+          const hasEl=(ELEMENTS[s.id]||[]).length>0; const cat=CategoryStore.forStep(s);
           return `<div class="step-card">
             <div class="step-head"><div>
-              <span class="badge ${badgeClass(g)}">${g}</span>
+              ${catBadgeHtml(cat)}
               <div class="step-name">${escapeHtml(s.name)}</div>
               ${hasEl?`<span class="muted" style="font-size:11px;">${ELEMENTS[s.id].length} elements — guided</span>`:''}
             </div></div>
@@ -177,15 +174,13 @@ function renderGroups(){
   }).join("");
 }
 
-// simple timers
 function toggleSimple(id){const t=simpleTimers[id];if(t&&t.running)stopSimple(id);else startSimple(id);}
 function startSimple(id){const startTs=Date.now();simpleTimers[id]={running:true,startTs};const b=document.getElementById(`b-${id}`);b.textContent="⏸ Stop";b.classList.add("danger");simpleTimers[id].intervalId=setInterval(()=>{document.getElementById(`t-${id}`).textContent=fmtDuration((Date.now()-startTs)/1000);},200);}
 async function stopSimple(id){const t=simpleTimers[id];if(!t)return;clearInterval(t.intervalId);const dur=(Date.now()-t.startTs)/1000,si=new Date(t.startTs).toISOString(),ei=new Date().toISOString();simpleTimers[id]={running:false};const b=document.getElementById(`b-${id}`);b.textContent="▶ Start";b.classList.remove("danger");document.getElementById(`t-${id}`).textContent="00:00";const s=STEPS.find(x=>x.id===id);await saveEntry(s,null,{duration_seconds:dur,entry_method:"stopwatch",start_time:si,end_time:ei});}
 async function skipSimple(id){const s=STEPS.find(x=>x.id===id);await saveEntry(s,null,{duration_seconds:0,entry_method:"skip",skipped:true});}
 function manualPrompt(id){const v=prompt("Enter time (e.g. 1:45 or 105 seconds):");if(v===null)return;const secs=parseDurationInput(v);if(secs==null)return toast("Invalid time","error");const s=STEPS.find(x=>x.id===id);saveEntry(s,null,{duration_seconds:secs,entry_method:"manual"});}
 
-// guided sequence
-function startSequence(stepId){const s=STEPS.find(x=>x.id===stepId);const els=ELEMENTS[stepId]||[];seq={step:s,elements:els,idx:-1,running:false,startTs:null,intervalId:null,log:[]};document.getElementById("sequencePanel").classList.remove("hidden");document.getElementById("seqActivity").textContent=s.name;const badge=document.getElementById("seqBadge");badge.textContent=s.category_group||"task";badge.className="badge "+badgeClass(s.category_group||"task");document.getElementById("seqCurrent").textContent="—";document.getElementById("seqNext").textContent="Tap Start to begin: "+(els[0]?.name||"");document.getElementById("seqTimer").textContent="00:00";document.getElementById("seqAdvanceBtn").textContent="▶ Start";document.getElementById("seqLog").innerHTML="";window.scrollTo({top:0,behavior:"smooth"});}
+function startSequence(stepId){const s=STEPS.find(x=>x.id===stepId);const els=ELEMENTS[stepId]||[];seq={step:s,elements:els,idx:-1,running:false,startTs:null,intervalId:null,log:[]};document.getElementById("sequencePanel").classList.remove("hidden");document.getElementById("seqActivity").textContent=s.name;document.getElementById("seqBadge").innerHTML=catBadgeHtml(CategoryStore.forStep(s));document.getElementById("seqCurrent").textContent="—";document.getElementById("seqNext").textContent="Tap Start to begin: "+(els[0]?.name||"");document.getElementById("seqTimer").textContent="00:00";document.getElementById("seqAdvanceBtn").textContent="▶ Start";document.getElementById("seqLog").innerHTML="";window.scrollTo({top:0,behavior:"smooth"});}
 function seqTick(){if(seq&&seq.running)document.getElementById("seqTimer").textContent=fmtDuration((Date.now()-seq.startTs)/1000);}
 async function advanceSequence(){if(!seq)return;if(seq.running&&seq.idx>=0){await commitCurrentElement();}seq.idx++;if(seq.idx>=seq.elements.length){await finishSequence();return;}seq.running=true;seq.startTs=Date.now();clearInterval(seq.intervalId);seq.intervalId=setInterval(seqTick,200);document.getElementById("seqCurrent").textContent=seq.elements[seq.idx].name;document.getElementById("seqNext").textContent=seq.idx+1<seq.elements.length?"next: "+seq.elements[seq.idx+1].name:"next: ✓ Finish cycle";document.getElementById("seqAdvanceBtn").textContent=seq.idx+1<seq.elements.length?"✓ Save & next ▶":"✓ Save & finish";document.getElementById("seqTimer").textContent="00:00";}
 async function commitCurrentElement(){const el=seq.elements[seq.idx];const dur=(Date.now()-seq.startTs)/1000;const si=new Date(seq.startTs).toISOString(),ei=new Date().toISOString();clearInterval(seq.intervalId);seq.running=false;await saveEntry(seq.step,el,{duration_seconds:dur,entry_method:"stopwatch",start_time:si,end_time:ei},true);seq.log.unshift(`✓ ${el.name}: ${fmtDuration(dur)}`);document.getElementById("seqLog").innerHTML=seq.log.slice(0,8).join("<br>");}
@@ -193,23 +188,21 @@ async function skipCurrentElement(){if(!seq||seq.idx<0)return;const el=seq.eleme
 async function finishSequence(){if(seq&&seq.running&&seq.idx>=0&&seq.idx<seq.elements.length){await commitCurrentElement();}cancelSequence();toast("Cycle complete — starting next");newCycle();}
 function cancelSequence(){if(seq){clearInterval(seq.intervalId);}seq=null;document.getElementById("sequencePanel").classList.add("hidden");}
 
-// save
 async function saveEntry(step,element,extra,quiet){
   const now=new Date().toISOString();
-  const payload={run_id:RUN_ID,project_id:PROJECT_ID,step_template_id:step.id,step_name:step.name,step_type:step.category_group||step.step_type||"task",category_group:step.category_group||"task",parent_step_name:element?step.name:null,element_name:element?element.name:null,cycle_number:CYCLE,recorded_by:CURRENT_USER.id,recorded_by_name:CURRENT_USER.display_name,start_time:extra.start_time||now,end_time:extra.end_time||now,duration_seconds:extra.duration_seconds,entry_method:extra.entry_method,skipped:extra.skipped||false,data_quality:document.getElementById("dataQuality").value,mmu_name:document.getElementById("activeMmu").value.trim()||null,blast_name:document.getElementById("activeBlast").value.trim()||null};
+  const cat=CategoryStore.forStep(step);
+  const payload={run_id:RUN_ID,project_id:PROJECT_ID,step_template_id:step.id,step_name:step.name,step_type:step.category_group||"task",category_group:cat?cat.report_group:(step.category_group||"task"),category_label:cat?cat.label:null,category_color:cat?cat.color:null,parent_step_name:element?step.name:null,element_name:element?element.name:null,cycle_number:CYCLE,recorded_by:CURRENT_USER.id,recorded_by_name:CURRENT_USER.display_name,start_time:extra.start_time||now,end_time:extra.end_time||now,duration_seconds:extra.duration_seconds,entry_method:extra.entry_method,skipped:extra.skipped||false,data_quality:document.getElementById("dataQuality").value,mmu_name:document.getElementById("activeMmu").value.trim()||null,blast_name:document.getElementById("activeBlast").value.trim()||null};
   const {data,error}=await sb.from("entries").insert(payload).select().single();
   if(error)return toast(error.message,"error");
   lastEntryId=data.id;
-  if(!quiet){toast(`${element?element.name:step.name}: ${extra.skipped?'skipped':fmtDuration(extra.duration_seconds)} saved`);openDetail(step.category_group||"task");}
+  if(!quiet){toast(`${element?element.name:step.name}: ${extra.skipped?'skipped':fmtDuration(extra.duration_seconds)} saved`);openDetail(cat?cat.report_group:"task");}
   syncNow();
 }
 
-// detail modal
-function openDetail(cat){document.getElementById("detailNote").value="";document.getElementById("detailOpp").checked=false;document.getElementById("oppTypeWrap").style.display="none";document.getElementById("oppWrap").style.display=(cat==="customer"||cat==="orica")?"block":"none";document.getElementById("detailModal").classList.remove("hidden");}
+function openDetail(reportGroup){document.getElementById("detailNote").value="";document.getElementById("detailOpp").checked=false;document.getElementById("oppTypeWrap").style.display="none";document.getElementById("oppWrap").style.display=(reportGroup==="customer"||reportGroup==="orica")?"block":"none";document.getElementById("detailModal").classList.remove("hidden");}
 function closeDetail(){document.getElementById("detailModal").classList.add("hidden");}
 async function saveDetail(){if(!lastEntryId){closeDetail();return;}const note=document.getElementById("detailNote").value.trim();const opp=document.getElementById("detailOpp").checked;const t=document.getElementById("detailOppType").value;await sb.from("entries").update({notes:note||null,is_opportunity:opp,opportunity_type:opp?t:null}).eq("id",lastEntryId);closeDetail();syncNow();}
 
-// cycle / complete / sync
 function newCycle(){const running=Object.values(simpleTimers).some(t=>t?.running)||(seq&&seq.running);if(running)return toast("Stop the running timer first","error");CYCLE++;document.getElementById("cycleNum").textContent=CYCLE;toast(`Cycle ${CYCLE}`);}
 async function completeRun(){if(!confirm("Mark this run completed?"))return;await sb.from("study_runs").update({status:"completed",ended_at:new Date().toISOString()}).eq("id",RUN_ID);toast("Run completed");loadRun();}
 async function syncNow(){
@@ -217,7 +210,7 @@ async function syncNow(){
   if(error)return;
   document.getElementById("syncTime").textContent="synced "+new Date().toLocaleTimeString("en-AU");
   STEPS.forEach(s=>{const last=(data||[]).find(e=>e.step_template_id===s.id);const el=document.getElementById(`last-${s.id}`);if(el)el.textContent=last?`Last: ${last.skipped?'skipped':fmtDuration(last.duration_seconds)} · ${last.mmu_name||''} · ${fmtDateTime(last.created_at)}`:"";});
-  document.getElementById("feedBody").innerHTML=(data||[]).map(e=>`<tr><td>${fmtDateTime(e.created_at)}</td><td>${escapeHtml(e.mmu_name||'')}</td><td>${escapeHtml(e.parent_step_name||e.step_name)}</td><td>${escapeHtml(e.element_name||'')}</td><td><span class="badge ${badgeClass(e.category_group||'task')}">${(e.category_group||'task').slice(0,4)}</span></td><td>${e.cycle_number}</td><td>${escapeHtml(e.recorded_by_name||'')}</td><td>${e.skipped?'<span class="muted">skip</span>':fmtDuration(e.duration_seconds)}</td><td>${(e.data_quality||'obs').slice(0,3)}</td></tr>`).join("");
+  document.getElementById("feedBody").innerHTML=(data||[]).map(e=>`<tr><td>${fmtDateTime(e.created_at)}</td><td>${escapeHtml(e.mmu_name||'')}</td><td>${escapeHtml(e.parent_step_name||e.step_name)}</td><td>${escapeHtml(e.element_name||'')}</td><td>${entryBadgeHtml(e)}</td><td>${e.cycle_number}</td><td>${escapeHtml(e.recorded_by_name||'')}</td><td>${e.skipped?'<span class="muted">skip</span>':fmtDuration(e.duration_seconds)}</td><td>${(e.data_quality||'obs').slice(0,3)}</td></tr>`).join("");
 }
 
 boot();
