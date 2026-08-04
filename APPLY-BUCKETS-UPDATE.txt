@@ -1,0 +1,66 @@
+TIME & MOTION TRACKER — Buckets & Drag-to-Order Update
+======================================================
+Adds:
+ • User-created BUCKETS (e.g. MMU, On-bench, Reload) to group activities
+ • Vertical drag-to-reorder board (drag the ⠿ handle) — works on
+   PC, tablet and iPhone (SortableJS, touch-enabled)
+ • ↑ ↓ arrow buttons as a reliable fallback on every activity & bucket
+ • Drag activities between buckets
+ • Rename / delete / reorder buckets
+ • Standard library now drops activities into sensible buckets
+ • Tracker groups activities by your buckets, in your chosen order
+
+====================================================================
+STEP 1 — RUN THE MIGRATION (once)  ~15 seconds
+====================================================================
+1. Supabase Dashboard -> SQL Editor -> New query
+2. Paste ALL of  sql/migration_v3.sql  -> Run
+3. Expect "Success. No rows returned."  (Additive only — nothing deleted.)
+
+====================================================================
+STEP 2 — COPY FILES INTO YOUR CLONED REPO (GitHub Desktop)
+====================================================================
+Overwrite / add:
+
+  ROOT (overwrite):
+    templates.html
+    tracker.html
+
+  js\ (overwrite):
+    activityLibrary.js
+
+  sql\ (add):
+    migration_v3.sql
+
+DO NOT TOUCH (leave as-is):
+    js\config.js  (your live keys)
+    everything else you already have
+
+====================================================================
+STEP 3 — COMMIT & PUSH (GitHub Desktop)
+====================================================================
+  Summary: "Buckets + drag-to-order board"
+  Commit to main -> Push origin  (Netlify redeploys ~30 sec)
+
+====================================================================
+STEP 4 — USE IT
+====================================================================
+Templates page:
+ • "+ New bucket"  -> name it (MMU, On-bench, Reload…)
+ • "+ New activity" -> pick its bucket + category
+ • Drag the ⠿ handle on an activity to reorder, or drag it into
+   another bucket. Or use the ▲ ▼ arrows.
+ • Drag a bucket's ⠿ header handle (or ▲ ▼) to reorder whole buckets.
+ • Rename a bucket by typing in its title; Delete moves its activities
+   to "Unsorted" (nothing is lost).
+ • "Load standard MMU library" creates buckets + activities for you.
+
+Tracker page:
+ • Activities now appear grouped by your buckets, in your order —
+   your logical top-to-bottom shift sequence.
+
+Notes:
+ • Existing activities (from before) start life in "Unsorted" — just
+   drag them into buckets.
+ • Reports & Export are unchanged and still work (they group by the
+   accountability category, which every activity still keeps).
