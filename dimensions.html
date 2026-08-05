@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Project Dimensions - Time & Motion Tracker</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta name="theme-color" content="#0093D1">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+<style>
+  .dimension-row{display:grid;grid-template-columns:1.4fr .9fr .7fr .7fr auto;gap:10px;align-items:end;padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:#fff;}
+  .dimension-row.calculated{background:#f7fbfd;border-color:#b8d6f7;}
+  .dimension-row .field{margin-bottom:0;}
+  .dim-pill{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;background:#e0f3fb;color:var(--orica-cerulean-dark);text-transform:uppercase;}
+  @media(max-width:760px){.dimension-row{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div id="topbar-container"></div>
+<div class="wrap">
+  <div class="card">
+    <div class="row between">
+      <div>
+        <h2 class="mb0">Project Dimensions</h2>
+        <p class="muted" id="projectTitle" style="margin:4px 0 0;">Optional context fields for the project or blast design.</p>
+      </div>
+      <span class="dim-pill" id="fieldCount">0 fields</span>
+    </div>
+    <p class="muted" style="font-size:13px;margin-top:10px;">Use this for blast design context such as burden, spacing, hole depth, hole diameter and number of holes. It is optional and does not block tracking.</p>
+  </div>
+
+  <div class="card">
+    <h3>Template</h3>
+    <div class="row">
+      <button onclick="loadBlastTemplate()">Load Blast Design Template</button>
+      <button class="secondary" onclick="loadCrewAuditTemplate()">Load Crew Audit Template</button>
+      <button class="secondary" onclick="addCustomField()">+ Custom field</button>
+      <button class="danger" onclick="clearDimensions()">Clear fields</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Fields</h3>
+    <div id="dimensionList"></div>
+    <div class="row mt16">
+      <button onclick="saveDimensions()">Save dimensions</button>
+      <button class="secondary" onclick="loadDimensions()">Reload</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Calculated blast context</h3>
+    <div class="stat-grid">
+      <div class="stat"><div class="num" id="calcVolume">-</div><div class="lbl">Approx pattern volume BCM</div></div>
+      <div class="stat"><div class="num" id="calcMetres">-</div><div class="lbl">Total drilled metres</div></div>
+      <div class="stat"><div class="num" id="calcPf">-</div><div class="lbl">Powder factor kg/BCM</div></div>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:8px;">Calculations use entered dimensions only: volume = burden x spacing x hole depth x holes. Powder factor requires explosive kg.</p>
+  </div>
+</div>
+<script>
+let PROJECT_ID=getParam("project");
+let CURRENT_USER=null;
+let DIMENSIONS=[];
+
+const defaultBlast=[
+  {field_key:"blast_name",field_label:"Blast name",field_type:"text",field_unit:"",field_value:"",sort_order:0},
+  {field_key:"bench",field_label:"Bench / location",field_type:"text",field_unit:"",field_value:"",sort_order:1},
+  {field_key:"burden_m",field_label:"Burden",field_type:"number",field_unit:"m",field_value:"",sort_order:2},
+  {field_key:"spacing_m",field_label:"Spacing",field_type:"number",field_unit:"m",field_value:"",sort_order:3},
+  {field_key:"hole_depth_m",field_label:"Hole depth",field_type:"number",field_unit:"m",field_value:"",sort_order:4},
+  {field_key:"hole_diameter_mm",field_label:"Hole diameter",field_type:"number",field_unit:"mm",field_value:"",sort_order:5},
+  {field_key:"number_of_holes",field_label:"Number of holes",field_type:"number",field_unit:"holes",field_value:"",sort_order:6},
+  {field_key:"stemming_m",field_label:"Stemming",field_type:"number",field_unit:"m",field_value:"",sort_order:7},
+  {field_key:"subdrill_m",field_label:"Subdrill",field_type:"number",field_unit:"m",field_value:"",sort_order:8},
+  {field_key:"explosive_kg",field_label:"Explosive mass",field_type:"number",field_unit:"kg",field_value:"",sort_order:9}
+];
+const defaultCrew=[
+  {field_key:"site",field_label:"Site",field_type:"text",field_unit:"",field_value:"",sort_order:0},
+  {field_key:"shift",field_label:"Shift",field_type:"text",field_unit:"",field_value:"",sort_order:1},
+  {field_key:"crew_size",field_label:"Crew size",field_type:"number",field_unit:"people",field_value:"",sort_order:2},
+  {field_key:"equipment",field_label:"Equipment",field_type:"text",field_unit:"",field_value:"",sort_order:3},
+  {field_key:"planned_hours",field_label:"Planned shift hours",field_type:"number",field_unit:"hr",field_value:"",sort_order:4}
+];
+
+async function boot(){
+  if(!PROJECT_ID){window.location.href="index.html";return;}
+  CURRENT_USER=await requireAuth(); if(!CURRENT_USER)return;
+  await renderTopbar("dimensions",CURRENT_USER);
+  await loadProject();
+  await loadDimensions();
+}
+async function loadProject(){
+  const {data}=await sb.from("projects").select("name,description").eq("id",PROJECT_ID).single();
+  if(data)document.getElementById("projectTitle").textContent=data.name+(data.description?" - "+data.description:"");
+}
+async function loadDimensions(){
+  const {data,error}=await sb.from("project_dimensions").select("*").eq("project_id",PROJECT_ID).order("sort_order");
+  if(error)return toast(error.message,"error");
+  DIMENSIONS=data||[];
+  renderDimensions();
+}
+function loadBlastTemplate(){
+  if(DIMENSIONS.length&&!confirm("Replace current dimension fields with the Blast Design template?"))return;
+  DIMENSIONS=defaultBlast.map(x=>({...x,template_name:"Blast Design"}));
+  renderDimensions();
+}
+function loadCrewAuditTemplate(){
+  if(DIMENSIONS.length&&!confirm("Replace current dimension fields with the Crew Audit template?"))return;
+  DIMENSIONS=defaultCrew.map(x=>({...x,template_name:"Crew Audit"}));
+  renderDimensions();
+}
+function addCustomField(){
+  const n=DIMENSIONS.length;
+  DIMENSIONS.push({field_key:"custom_"+(n+1),field_label:"Custom field "+(n+1),field_type:"text",field_unit:"",field_value:"",sort_order:n,template_name:"Custom"});
+  renderDimensions();
+}
+async function clearDimensions(){
+  if(!confirm("Clear all dimensions for this project?"))return;
+  const {error}=await sb.from("project_dimensions").delete().eq("project_id",PROJECT_ID);
+  if(error)return toast(error.message,"error");
+  DIMENSIONS=[]; renderDimensions(); toast("Dimensions cleared");
+}
+function renderDimensions(){
+  document.getElementById("fieldCount").textContent=`${DIMENSIONS.length} field${DIMENSIONS.length===1?"":"s"}`;
+  const list=document.getElementById("dimensionList");
+  if(!DIMENSIONS.length){ list.innerHTML='<p class="muted">No dimensions yet. Load a template or add a custom field.</p>'; updateCalcs(); return; }
+  list.innerHTML=DIMENSIONS.map((d,i)=>`
+    <div class="dimension-row">
+      <div class="field"><label>Field label</label><input value="${escapeHtml(d.field_label||"")}" onchange="setDim(${i},'field_label',this.value)"></div>
+      <div class="field"><label>Value</label><input type="${d.field_type==='number'?'number':d.field_type==='date'?'date':'text'}" value="${escapeHtml(d.field_value||"")}" onchange="setDim(${i},'field_value',this.value);updateCalcs();"></div>
+      <div class="field"><label>Unit</label><input value="${escapeHtml(d.field_unit||"")}" onchange="setDim(${i},'field_unit',this.value)"></div>
+      <div class="field"><label>Type</label><select onchange="setDim(${i},'field_type',this.value);renderDimensions();"><option value="text" ${d.field_type==='text'?'selected':''}>Text</option><option value="number" ${d.field_type==='number'?'selected':''}>Number</option><option value="date" ${d.field_type==='date'?'selected':''}>Date</option></select></div>
+      <div class="row" style="gap:4px;"><button class="ghost small" onclick="moveDim(${i},-1)" ${i===0?'disabled':''}>▲</button><button class="ghost small" onclick="moveDim(${i},1)" ${i===DIMENSIONS.length-1?'disabled':''}>▼</button><button class="danger small" onclick="removeDim(${i})">Delete</button></div>
+    </div>`).join("");
+  updateCalcs();
+}
+function setDim(i,k,v){DIMENSIONS[i][k]=v;if(k==='field_label'&&!DIMENSIONS[i].field_key){DIMENSIONS[i].field_key=slug(v);} }
+function slug(v){return String(v||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"")||("field_"+Date.now());}
+function removeDim(i){DIMENSIONS.splice(i,1); DIMENSIONS.forEach((d,idx)=>d.sort_order=idx); renderDimensions();}
+function moveDim(i,d){const j=i+d;if(j<0||j>=DIMENSIONS.length)return;[DIMENSIONS[i],DIMENSIONS[j]]=[DIMENSIONS[j],DIMENSIONS[i]];DIMENSIONS.forEach((x,idx)=>x.sort_order=idx);renderDimensions();}
+function val(key){const d=DIMENSIONS.find(x=>x.field_key===key);return parseFloat(d?.field_value)||0;}
+function updateCalcs(){
+  const burden=val("burden_m"), spacing=val("spacing_m"), depth=val("hole_depth_m"), holes=val("number_of_holes"), kg=val("explosive_kg");
+  const volume=burden*spacing*depth*holes;
+  const metres=depth*holes;
+  document.getElementById("calcVolume").textContent=volume?volume.toFixed(0):"-";
+  document.getElementById("calcMetres").textContent=metres?metres.toFixed(1):"-";
+  document.getElementById("calcPf").textContent=(volume&&kg)?(kg/volume).toFixed(3):"-";
+}
+async function saveDimensions(){
+  for(let i=0;i<DIMENSIONS.length;i++){
+    const d=DIMENSIONS[i];
+    d.project_id=PROJECT_ID; d.sort_order=i; d.field_key=d.field_key||slug(d.field_label);
+    const {error}=await sb.from("project_dimensions").upsert(d,{onConflict:"project_id,field_key"});
+    if(error)return toast(error.message,"error");
+  }
+  toast("Project dimensions saved");
+  await loadDimensions();
+}
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+EXPORT.HTML PATCH - Project Dimensions
+
+1) Add this button into the Downloads button row:
+
+<button class="secondary" onclick="exportAllWithDimensions()">Export all + dimensions CSV</button>
+
+2) Add this JavaScript before boot(); at the bottom of export.html:
+
+async function loadProjectDimensions(){
+  const {data,error}=await sb.from("project_dimensions").select("*").eq("project_id",PROJECT_ID).order("sort_order");
+  if(error){ console.warn(error.message); return []; }
+  return data||[];
+}
+function dimColumns(dims){
+  return dims.map(d=>({
+    label: "Dimension - "+(d.field_label||d.field_key)+(d.field_unit?" ("+d.field_unit+")":""),
+    value: r => d.field_value || ""
+  }));
+}
+function calcDimensionColumns(dims){
+  const get=k=>parseFloat((dims.find(d=>d.field_key===k)||{}).field_value)||0;
+  const burden=get("burden_m"), spacing=get("spacing_m"), depth=get("hole_depth_m"), holes=get("number_of_holes"), kg=get("explosive_kg");
+  const volume=burden*spacing*depth*holes;
+  const metres=depth*holes;
+  const pf=(volume&&kg)?kg/volume:null;
+  return [
+    {label:"Calc - Approx pattern volume BCM",value:r=>volume?volume.toFixed(0):""},
+    {label:"Calc - Total drilled metres",value:r=>metres?metres.toFixed(1):""},
+    {label:"Calc - Powder factor kg/BCM",value:r=>pf?pf.toFixed(3):""}
+  ];
+}
+async function exportAllWithDimensions(){
+  if(!FILTERED.length)return toast("Nothing to export","error");
+  const dims=await loadProjectDimensions();
+  const csv=toCSV(FILTERED,[
+    ...dimColumns(dims),
+    ...calcDimensionColumns(dims),
+    {label:"Date",value:r=>fmtDate(r.created_at)},
+    {label:"Blast",value:"blast_name"},
+    {label:"MMU",value:"mmu_name"},
+    {label:"Activity",value:r=>r.parent_step_name||r.step_name},
+    {label:"Element",value:"element_name"},
+    {label:"Category",value:"category_group"},
+    {label:"Observed/Estimated",value:r=>r.data_quality||"observed"},
+    {label:"Cycle",value:"cycle_number"},
+    {label:"Recorded By",value:"recorded_by_name"},
+    {label:"Start",value:"start_time"},
+    {label:"Finish",value:"end_time"},
+    {label:"Duration (s)",value:"duration_seconds"},
+    {label:"Duration (min)",value:r=>((r.duration_seconds||0)/60).toFixed(3)},
+    {label:"Duration (hr)",value:r=>((r.duration_seconds||0)/3600).toFixed(4)},
+    {label:"Method",value:"entry_method"},
+    {label:"Skipped",value:r=>r.skipped?"Yes":"No"},
+    {label:"Opportunity",value:r=>r.is_opportunity?(r.opportunity_type||"yes"):""},
+    {label:"Notes",value:"notes"},
+    {label:"Recorded At",value:"created_at"}
+  ]);
+  downloadFile(`tm_all_with_dimensions_${Date.now()}.csv`,csv);
+}

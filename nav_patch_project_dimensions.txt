@@ -1,0 +1,29 @@
+NAV PATCH - add Dimensions tab
+
+In js/auth.js, find the links array inside renderTopbar(...).
+Add this item between Templates and Tracker:
+
+{key:"dimensions",label:"Dimensions",href:`dimensions.html${q}`},
+
+Your links array should conceptually become:
+
+const links=[
+  {key:"project",label:"Project",href:`project.html${q}`},
+  {key:"templates",label:"Templates",href:`templates.html${q}`},
+  {key:"dimensions",label:"Dimensions",href:`dimensions.html${q}`},
+  {key:"tracker",label:"Tracker",href:`tracker.html${q}`},
+  {key:"reports",label:"Reports",href:`reports.html${q}`},
+  {key:"export",label:"Export",href:`export.html${q}`}
+];
+
+In project.html, add this Quick link button near Templates/Reports/Export:
+
+<a class="btn secondary" id="lnkDimensions" href="dimensions.html">📐 Dimensions</a>
+
+Then update this array:
+
+["lnkTemplates","lnkReports","lnkExport"]
+
+to:
+
+["lnkTemplates","lnkDimensions","lnkReports","lnkExport"]
