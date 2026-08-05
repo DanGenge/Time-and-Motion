@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
-<title>Project — Time &amp; Motion Tracker</title>
+<title>Project — Time & Motion Tracker</title>
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
 <meta name="theme-color" content="#0093D1">
@@ -15,11 +15,8 @@
 <script src="js/auth.js"></script>
 </head>
 <body>
-
 <div id="topbar-container"></div>
-
 <div class="wrap">
-
   <div class="card">
     <div class="row between">
       <h2 id="projName" class="mb0">Loading project…</h2>
@@ -29,8 +26,6 @@
   </div>
 
   <div class="grid cols-2">
-
-    <!-- Runs -->
     <div class="card">
       <div class="row between">
         <h3>Observation runs</h3>
@@ -55,7 +50,6 @@
       <div id="runList" class="mt16"></div>
     </div>
 
-    <!-- Members -->
     <div class="card">
       <h3>Project members</h3>
       <div id="memberList"></div>
@@ -63,38 +57,42 @@
         <input id="inviteEmail" placeholder="teammate@orica.com" style="flex:2;">
         <button class="small" onclick="addMember()">Add</button>
       </div>
-      <p class="muted" style="font-size:12px;margin-top:6px;">They must already have an account (ask them to sign up first).</p>
+      <p class="muted" style="font-size:12px;margin-top:6px;">They must already have an account. Ask them to sign up first.</p>
     </div>
-
   </div>
 
   <div class="card">
     <h3>Quick links</h3>
     <div class="row">
       <a class="btn" id="lnkTemplates" href="templates.html">📋 Manage activities</a>
+      <a class="btn secondary" id="lnkDimensions" href="dimensions.html">📐 Dimensions</a>
       <a class="btn secondary" id="lnkReports" href="reports.html">📊 Reports</a>
       <a class="btn secondary" id="lnkExport" href="export.html">⬇️ Export</a>
     </div>
   </div>
 </div>
-
 <script>
-let PROJECT_ID=getParam("project");
-let CURRENT_USER=null;
+let PROJECT_ID = getParam("project");
+let CURRENT_USER = null;
 
 async function boot(){
-  if(!PROJECT_ID){window.location.href="index.html";return;}
-  CURRENT_USER=await requireAuth(); if(!CURRENT_USER)return;
-  await renderTopbar("project",CURRENT_USER);
-  ["lnkTemplates","lnkReports","lnkExport"].forEach(id=>{const a=document.getElementById(id);a.href=a.getAttribute("href").split("?")[0]+`?project=${PROJECT_ID}`;});
+  if(!PROJECT_ID){ window.location.href="index.html"; return; }
+  CURRENT_USER = await requireAuth(); if(!CURRENT_USER) return;
+  await renderTopbar("project", CURRENT_USER);
+  ["lnkTemplates","lnkDimensions","lnkReports","lnkExport"].forEach(id => {
+    const a = document.getElementById(id);
+    a.href = a.getAttribute("href").split("?")[0] + `?project=${PROJECT_ID}`;
+  });
   await loadProject(); await loadMembers(); await loadRuns();
 }
+
 async function loadProject(){
   const {data,error}=await sb.from("projects").select("*").eq("id",PROJECT_ID).single();
-  if(error){toast("Could not load project — no access.","error");return;}
+  if(error){ toast("Could not load project — no access.","error"); return; }
   document.getElementById("projName").textContent=data.name;
   document.getElementById("projDesc").textContent=data.description||"";
 }
+
 async function loadMembers(){
   const {data,error}=await sb.from("project_members").select("role,user_id,profiles(display_name,email)").eq("project_id",PROJECT_ID);
   if(error)return;
@@ -104,6 +102,7 @@ async function loadMembers(){
       <span>${escapeHtml(m.profiles?.display_name||"Unknown")} <span class="muted">(${m.role})</span></span>
     </div>`).join("");
 }
+
 async function addMember(){
   const email=document.getElementById("inviteEmail").value.trim(); if(!email)return;
   const {data:profile,error:pErr}=await sb.from("profiles").select("id").eq("email",email).maybeSingle();
@@ -112,8 +111,10 @@ async function addMember(){
   if(error)return toast(error.message.includes("duplicate")?"Already a member.":error.message,"error");
   toast("Member added!"); document.getElementById("inviteEmail").value=""; loadMembers();
 }
+
 function openNewRun(){document.getElementById("newRunForm").classList.remove("hidden");}
 function closeNewRun(){document.getElementById("newRunForm").classList.add("hidden");}
+
 async function createRun(){
   const run_name=document.getElementById("rnName").value.trim();
   if(!run_name)return toast("Give the run a name","error");
@@ -132,17 +133,13 @@ async function createRun(){
   window.location.href=`tracker.html?project=${PROJECT_ID}&run=${data.id}`;
 }
 
-// ---- Delete a run (and its entries) with a clear confirmation ----
 async function deleteRun(runId, runName){
-  // count entries so the user knows exactly what they're removing
   const { count } = await sb.from("entries").select("id",{count:"exact",head:true}).eq("run_id",runId);
   const n = count || 0;
   const msg = n>0
     ? `Delete "${runName}"?\n\nThis permanently removes the run AND its ${n} recorded ${n===1?'entry':'entries'}. This cannot be undone.`
     : `Delete "${runName}"?\n\nThis run has no entries yet. This cannot be undone.`;
   if(!confirm(msg)) return;
-
-  // delete child entries first (safe even if DB cascade exists), then the run
   const { error: eErr } = await sb.from("entries").delete().eq("run_id",runId);
   if(eErr) return toast(eErr.message,"error");
   const { error } = await sb.from("study_runs").delete().eq("id",runId);
