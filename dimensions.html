@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
-<title>Project Dimensions - Time & Motion Tracker</title>
+<title>Blast Design Parameters - Time & Motion Tracker</title>
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
 <meta name="theme-color" content="#0093D1">
@@ -14,11 +14,11 @@
 <script src="js/utils.js"></script>
 <script src="js/auth.js"></script>
 <style>
-  .dimension-row{display:grid;grid-template-columns:1.4fr .9fr .7fr .7fr auto;gap:10px;align-items:end;padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:#fff;}
-  .dimension-row.calculated{background:#f7fbfd;border-color:#b8d6f7;}
-  .dimension-row .field{margin-bottom:0;}
-  .dim-pill{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;background:#e0f3fb;color:var(--orica-cerulean-dark);text-transform:uppercase;}
-  @media(max-width:760px){.dimension-row{grid-template-columns:1fr;}}
+.dimension-row{display:grid;grid-template-columns:1.4fr .9fr .7fr .7fr auto;gap:10px;align-items:end;padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:#fff;}
+.dimension-row .field{margin-bottom:0;}
+.dim-pill{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;background:#e0f3fb;color:var(--orica-cerulean-dark);text-transform:uppercase;}
+.import-log{display:none;margin-top:10px;background:#0f2434;color:#b8f0ff;border-radius:8px;padding:10px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;white-space:pre-wrap;max-height:130px;overflow:auto;text-align:left;}
+@media(max-width:760px){.dimension-row{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -27,29 +27,36 @@
   <div class="card">
     <div class="row between">
       <div>
-        <h2 class="mb0">Project Dimensions</h2>
-        <p class="muted" id="projectTitle" style="margin:4px 0 0;">Optional context fields for the project or blast design.</p>
+        <h2 class="mb0">Blast Design Parameters</h2>
+        <p class="muted" id="projectTitle" style="margin:4px 0 0;">Optional blast design and project context for this study.</p>
       </div>
       <span class="dim-pill" id="fieldCount">0 fields</span>
     </div>
-    <p class="muted" style="font-size:13px;margin-top:10px;">Use this for blast design context such as burden, spacing, hole depth, hole diameter and number of holes. It is optional and does not block tracking.</p>
+    <p class="muted" style="font-size:13px;margin-top:10px;">Capture the design context behind the time study: burden, spacing, hole depth, hole diameter, hole count, stemming, subdrill and explosive mass.</p>
   </div>
 
   <div class="card">
     <h3>Template</h3>
     <div class="row">
       <button onclick="loadBlastTemplate()">Load Blast Design Template</button>
+      <button class="secondary" onclick="document.getElementById('fi-csv').click()">📄 Import CSV</button>
+      <button class="secondary" onclick="document.getElementById('fi-spf').click()">💥 Import SP6/SPF</button>
       <button class="secondary" onclick="loadCrewAuditTemplate()">Load Crew Audit Template</button>
       <button class="secondary" onclick="addCustomField()">+ Custom field</button>
       <button class="danger" onclick="clearDimensions()">Clear fields</button>
+      <button class="secondary" onclick="downloadCSVTemplate()">⬇ CSV template</button>
     </div>
+    <input type="file" id="fi-csv" accept=".csv,text/csv" style="display:none">
+    <input type="file" id="fi-spf" accept=".spf,.sp6,.zip,application/zip" style="display:none">
+    <div class="import-log" id="log-csv"></div>
+    <div class="import-log" id="log-spf"></div>
   </div>
 
   <div class="card">
     <h3>Fields</h3>
     <div id="dimensionList"></div>
     <div class="row mt16">
-      <button onclick="saveDimensions()">Save dimensions</button>
+      <button onclick="saveDimensions()">Save parameters</button>
       <button class="secondary" onclick="loadDimensions()">Reload</button>
     </div>
   </div>
@@ -61,14 +68,13 @@
       <div class="stat"><div class="num" id="calcMetres">-</div><div class="lbl">Total drilled metres</div></div>
       <div class="stat"><div class="num" id="calcPf">-</div><div class="lbl">Powder factor kg/BCM</div></div>
     </div>
-    <p class="muted" style="font-size:12px;margin-top:8px;">Calculations use entered dimensions only: volume = burden x spacing x hole depth x holes. Powder factor requires explosive kg.</p>
+    <p class="muted" style="font-size:12px;margin-top:8px;">Volume = burden x spacing x hole depth x holes. Powder factor requires explosive kg. Imported burden/spacing from collar points is an estimate and should be checked.</p>
   </div>
 </div>
 <script>
 let PROJECT_ID=getParam("project");
 let CURRENT_USER=null;
 let DIMENSIONS=[];
-
 const defaultBlast=[
   {field_key:"blast_name",field_label:"Blast name",field_type:"text",field_unit:"",field_value:"",sort_order:0},
   {field_key:"bench",field_label:"Bench / location",field_type:"text",field_unit:"",field_value:"",sort_order:1},
@@ -79,7 +85,13 @@ const defaultBlast=[
   {field_key:"number_of_holes",field_label:"Number of holes",field_type:"number",field_unit:"holes",field_value:"",sort_order:6},
   {field_key:"stemming_m",field_label:"Stemming",field_type:"number",field_unit:"m",field_value:"",sort_order:7},
   {field_key:"subdrill_m",field_label:"Subdrill",field_type:"number",field_unit:"m",field_value:"",sort_order:8},
-  {field_key:"explosive_kg",field_label:"Explosive mass",field_type:"number",field_unit:"kg",field_value:"",sort_order:9}
+  {field_key:"explosive_kg",field_label:"Explosive mass",field_type:"number",field_unit:"kg",field_value:"",sort_order:9},
+  {field_key:"collar_min_x",field_label:"Collar min X",field_type:"number",field_unit:"",field_value:"",sort_order:10},
+  {field_key:"collar_max_x",field_label:"Collar max X",field_type:"number",field_unit:"",field_value:"",sort_order:11},
+  {field_key:"collar_min_y",field_label:"Collar min Y",field_type:"number",field_unit:"",field_value:"",sort_order:12},
+  {field_key:"collar_max_y",field_label:"Collar max Y",field_type:"number",field_unit:"",field_value:"",sort_order:13},
+  {field_key:"avg_collar_rl",field_label:"Average collar RL",field_type:"number",field_unit:"m",field_value:"",sort_order:14},
+  {field_key:"import_source",field_label:"Import source",field_type:"text",field_unit:"",field_value:"",sort_order:15}
 ];
 const defaultCrew=[
   {field_key:"site",field_label:"Site",field_type:"text",field_unit:"",field_value:"",sort_order:0},
@@ -88,82 +100,42 @@ const defaultCrew=[
   {field_key:"equipment",field_label:"Equipment",field_type:"text",field_unit:"",field_value:"",sort_order:3},
   {field_key:"planned_hours",field_label:"Planned shift hours",field_type:"number",field_unit:"hr",field_value:"",sort_order:4}
 ];
-
-async function boot(){
-  if(!PROJECT_ID){window.location.href="index.html";return;}
-  CURRENT_USER=await requireAuth(); if(!CURRENT_USER)return;
-  await renderTopbar("dimensions",CURRENT_USER);
-  await loadProject();
-  await loadDimensions();
-}
-async function loadProject(){
-  const {data}=await sb.from("projects").select("name,description").eq("id",PROJECT_ID).single();
-  if(data)document.getElementById("projectTitle").textContent=data.name+(data.description?" - "+data.description:"");
-}
-async function loadDimensions(){
-  const {data,error}=await sb.from("project_dimensions").select("*").eq("project_id",PROJECT_ID).order("sort_order");
-  if(error)return toast(error.message,"error");
-  DIMENSIONS=data||[];
-  renderDimensions();
-}
-function loadBlastTemplate(){
-  if(DIMENSIONS.length&&!confirm("Replace current dimension fields with the Blast Design template?"))return;
-  DIMENSIONS=defaultBlast.map(x=>({...x,template_name:"Blast Design"}));
-  renderDimensions();
-}
-function loadCrewAuditTemplate(){
-  if(DIMENSIONS.length&&!confirm("Replace current dimension fields with the Crew Audit template?"))return;
-  DIMENSIONS=defaultCrew.map(x=>({...x,template_name:"Crew Audit"}));
-  renderDimensions();
-}
-function addCustomField(){
-  const n=DIMENSIONS.length;
-  DIMENSIONS.push({field_key:"custom_"+(n+1),field_label:"Custom field "+(n+1),field_type:"text",field_unit:"",field_value:"",sort_order:n,template_name:"Custom"});
-  renderDimensions();
-}
-async function clearDimensions(){
-  if(!confirm("Clear all dimensions for this project?"))return;
-  const {error}=await sb.from("project_dimensions").delete().eq("project_id",PROJECT_ID);
-  if(error)return toast(error.message,"error");
-  DIMENSIONS=[]; renderDimensions(); toast("Dimensions cleared");
-}
-function renderDimensions(){
-  document.getElementById("fieldCount").textContent=`${DIMENSIONS.length} field${DIMENSIONS.length===1?"":"s"}`;
-  const list=document.getElementById("dimensionList");
-  if(!DIMENSIONS.length){ list.innerHTML='<p class="muted">No dimensions yet. Load a template or add a custom field.</p>'; updateCalcs(); return; }
-  list.innerHTML=DIMENSIONS.map((d,i)=>`
-    <div class="dimension-row">
-      <div class="field"><label>Field label</label><input value="${escapeHtml(d.field_label||"")}" onchange="setDim(${i},'field_label',this.value)"></div>
-      <div class="field"><label>Value</label><input type="${d.field_type==='number'?'number':d.field_type==='date'?'date':'text'}" value="${escapeHtml(d.field_value||"")}" onchange="setDim(${i},'field_value',this.value);updateCalcs();"></div>
-      <div class="field"><label>Unit</label><input value="${escapeHtml(d.field_unit||"")}" onchange="setDim(${i},'field_unit',this.value)"></div>
-      <div class="field"><label>Type</label><select onchange="setDim(${i},'field_type',this.value);renderDimensions();"><option value="text" ${d.field_type==='text'?'selected':''}>Text</option><option value="number" ${d.field_type==='number'?'selected':''}>Number</option><option value="date" ${d.field_type==='date'?'selected':''}>Date</option></select></div>
-      <div class="row" style="gap:4px;"><button class="ghost small" onclick="moveDim(${i},-1)" ${i===0?'disabled':''}>▲</button><button class="ghost small" onclick="moveDim(${i},1)" ${i===DIMENSIONS.length-1?'disabled':''}>▼</button><button class="danger small" onclick="removeDim(${i})">Delete</button></div>
-    </div>`).join("");
-  updateCalcs();
-}
-function setDim(i,k,v){DIMENSIONS[i][k]=v;if(k==='field_label'&&!DIMENSIONS[i].field_key){DIMENSIONS[i].field_key=slug(v);} }
+const aliasMap={blast:"blast_name",blastname:"blast_name",blast_name:"blast_name",shot:"blast_name",shot_name:"blast_name",bench:"bench",location:"bench",pit:"bench",burden:"burden_m",burden_m:"burden_m",burdenm:"burden_m",spacing:"spacing_m",spacing_m:"spacing_m",spacingm:"spacing_m",hole_depth:"hole_depth_m",holedepth:"hole_depth_m",depth:"hole_depth_m",hole_depth_m:"hole_depth_m",hole_diameter:"hole_diameter_mm",diameter:"hole_diameter_mm",hole_diameter_mm:"hole_diameter_mm",diameter_mm:"hole_diameter_mm",holes:"number_of_holes",hole_count:"number_of_holes",number_of_holes:"number_of_holes",num_holes:"number_of_holes",stemming:"stemming_m",stemming_m:"stemming_m",subdrill:"subdrill_m",subdrill_m:"subdrill_m",explosive:"explosive_kg",explosive_kg:"explosive_kg",kg:"explosive_kg",explosive_mass:"explosive_kg"};
+async function boot(){if(!PROJECT_ID){window.location.href="index.html";return;}CURRENT_USER=await requireAuth();if(!CURRENT_USER)return;await renderTopbar("dimensions",CURRENT_USER);initFileInputs();await loadProject();await loadDimensions();}
+async function loadProject(){const {data}=await sb.from("projects").select("name,description").eq("id",PROJECT_ID).single();if(data)document.getElementById("projectTitle").textContent=data.name+(data.description?" - "+data.description:"");}
+async function loadDimensions(){const {data,error}=await sb.from("project_dimensions").select("*").eq("project_id",PROJECT_ID).order("sort_order");if(error)return toast(error.message,"error");DIMENSIONS=data||[];renderDimensions();}
+function ensureBlastTemplate(){const existing={};DIMENSIONS.forEach(d=>existing[d.field_key]=true);defaultBlast.forEach(t=>{if(!existing[t.field_key])DIMENSIONS.push({...t,template_name:"Blast Design",sort_order:DIMENSIONS.length});});}
+function loadBlastTemplate(){if(DIMENSIONS.length&&!confirm("Replace current parameter fields with the Blast Design template?"))return;DIMENSIONS=defaultBlast.map(x=>({...x,template_name:"Blast Design"}));renderDimensions();}
+function loadCrewAuditTemplate(){if(DIMENSIONS.length&&!confirm("Replace current parameter fields with the Crew Audit template?"))return;DIMENSIONS=defaultCrew.map(x=>({...x,template_name:"Crew Audit"}));renderDimensions();}
+function addCustomField(){const n=DIMENSIONS.length;DIMENSIONS.push({field_key:"custom_"+(n+1),field_label:"Custom field "+(n+1),field_type:"text",field_unit:"",field_value:"",sort_order:n,template_name:"Custom"});renderDimensions();}
+async function clearDimensions(){if(!confirm("Clear all parameters for this project?"))return;const {error}=await sb.from("project_dimensions").delete().eq("project_id",PROJECT_ID);if(error)return toast(error.message,"error");DIMENSIONS=[];renderDimensions();toast("Parameters cleared");}
+function renderDimensions(){document.getElementById("fieldCount").textContent=`${DIMENSIONS.length} field${DIMENSIONS.length===1?"":"s"}`;const list=document.getElementById("dimensionList");if(!DIMENSIONS.length){list.innerHTML='<p class="muted">No parameters yet. Load a template, import a file, or add a custom field.</p>';updateCalcs();return;}list.innerHTML=DIMENSIONS.map((d,i)=>`<div class="dimension-row"><div class="field"><label>Field label</label><input value="${escapeHtml(d.field_label||"")}" onchange="setDim(${i},'field_label',this.value)"></div><div class="field"><label>Value</label><input type="${d.field_type==='number'?'number':d.field_type==='date'?'date':'text'}" value="${escapeHtml(d.field_value||"")}" onchange="setDim(${i},'field_value',this.value);updateCalcs();"></div><div class="field"><label>Unit</label><input value="${escapeHtml(d.field_unit||"")}" onchange="setDim(${i},'field_unit',this.value)"></div><div class="field"><label>Type</label><select onchange="setDim(${i},'field_type',this.value);renderDimensions();"><option value="text" ${d.field_type==='text'?'selected':''}>Text</option><option value="number" ${d.field_type==='number'?'selected':''}>Number</option><option value="date" ${d.field_type==='date'?'selected':''}>Date</option></select></div><div class="row" style="gap:4px;"><button class="ghost small" onclick="moveDim(${i},-1)" ${i===0?'disabled':''}>▲</button><button class="ghost small" onclick="moveDim(${i},1)" ${i===DIMENSIONS.length-1?'disabled':''}>▼</button><button class="danger small" onclick="removeDim(${i})">Delete</button></div></div>`).join("");updateCalcs();}
+function setDim(i,k,v){DIMENSIONS[i][k]=v;if(k==='field_label'&&!DIMENSIONS[i].field_key)DIMENSIONS[i].field_key=slug(v);}
 function slug(v){return String(v||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"")||("field_"+Date.now());}
-function removeDim(i){DIMENSIONS.splice(i,1); DIMENSIONS.forEach((d,idx)=>d.sort_order=idx); renderDimensions();}
+function removeDim(i){DIMENSIONS.splice(i,1);DIMENSIONS.forEach((d,idx)=>d.sort_order=idx);renderDimensions();}
 function moveDim(i,d){const j=i+d;if(j<0||j>=DIMENSIONS.length)return;[DIMENSIONS[i],DIMENSIONS[j]]=[DIMENSIONS[j],DIMENSIONS[i]];DIMENSIONS.forEach((x,idx)=>x.sort_order=idx);renderDimensions();}
 function val(key){const d=DIMENSIONS.find(x=>x.field_key===key);return parseFloat(d?.field_value)||0;}
-function updateCalcs(){
-  const burden=val("burden_m"), spacing=val("spacing_m"), depth=val("hole_depth_m"), holes=val("number_of_holes"), kg=val("explosive_kg");
-  const volume=burden*spacing*depth*holes;
-  const metres=depth*holes;
-  document.getElementById("calcVolume").textContent=volume?volume.toFixed(0):"-";
-  document.getElementById("calcMetres").textContent=metres?metres.toFixed(1):"-";
-  document.getElementById("calcPf").textContent=(volume&&kg)?(kg/volume).toFixed(3):"-";
-}
-async function saveDimensions(){
-  for(let i=0;i<DIMENSIONS.length;i++){
-    const d=DIMENSIONS[i];
-    d.project_id=PROJECT_ID; d.sort_order=i; d.field_key=d.field_key||slug(d.field_label);
-    const {error}=await sb.from("project_dimensions").upsert(d,{onConflict:"project_id,field_key"});
-    if(error)return toast(error.message,"error");
-  }
-  toast("Project dimensions saved");
-  await loadDimensions();
-}
+function updateCalcs(){const burden=val("burden_m"),spacing=val("spacing_m"),depth=val("hole_depth_m"),holes=val("number_of_holes"),kg=val("explosive_kg");const volume=burden*spacing*depth*holes;const metres=depth*holes;document.getElementById("calcVolume").textContent=volume?volume.toFixed(0):"-";document.getElementById("calcMetres").textContent=metres?metres.toFixed(1):"-";document.getElementById("calcPf").textContent=(volume&&kg)?(kg/volume).toFixed(3):"-";}
+async function saveDimensions(){for(let i=0;i<DIMENSIONS.length;i++){const d={...DIMENSIONS[i]};delete d.id;delete d.created_at;delete d.updated_at;d.project_id=PROJECT_ID;d.sort_order=i;d.field_key=d.field_key||slug(d.field_label);const {error}=await sb.from("project_dimensions").upsert(d,{onConflict:"project_id,field_key"});if(error)return toast(error.message,"error");}toast("Parameters saved");await loadDimensions();}
+function initFileInputs(){const csv=document.getElementById("fi-csv"),spf=document.getElementById("fi-spf");csv.addEventListener("change",()=>{if(csv.files.length)readCSVFile(csv.files[0]);csv.value="";});spf.addEventListener("change",()=>{if(spf.files.length)readSPFFile(spf.files[0]);spf.value="";});}
+function log(id,msg){const el=document.getElementById(id);el.style.display="block";el.textContent+=msg+"\n";el.scrollTop=el.scrollHeight;}
+function resetLog(id,msg){const el=document.getElementById(id);el.style.display="block";el.textContent=msg?msg+"\n":"";}
+function setField(key,value,label,unit,type){ensureBlastTemplate();key=aliasMap[slug(key)]||key;let d=DIMENSIONS.find(x=>x.field_key===key);if(!d){d={field_key:key,field_label:label||key.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()),field_type:type||((""+value).match(/^-?\d+(\.\d+)?$/)?"number":"text"),field_unit:unit||"",field_value:"",sort_order:DIMENSIONS.length,template_name:"Imported"};DIMENSIONS.push(d);}if(label)d.field_label=label;if(unit!==undefined)d.field_unit=unit||"";if(type)d.field_type=type;d.field_value=value==null?"":String(value);}
+function parseCSV(text){const rows=[];let row=[],val="",inQ=false;for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];if(c==='"'&&inQ&&n==='"'){val+='"';i++;}else if(c==='"'){inQ=!inQ;}else if(c===','&&!inQ){row.push(val);val="";}else if((c==='\n'||c==='\r')&&!inQ){if(c==='\r'&&n==='\n')i++;row.push(val);if(row.some(x=>x.trim()!==""))rows.push(row);row=[];val="";}else val+=c;}row.push(val);if(row.some(x=>x.trim()!==""))rows.push(row);return rows;}
+function readCSVFile(file){if(!file)return;resetLog("log-csv","Reading "+file.name+"...");const r=new FileReader();r.onload=e=>{try{importCSV(e.target.result,file.name);}catch(err){log("log-csv","Error: "+err.message);toast("CSV import failed","error");}};r.readAsText(file);}
+function importCSV(text,fileName){ensureBlastTemplate();const rows=parseCSV(text);if(rows.length<1)throw new Error("CSV is empty");const headers=rows[0].map(h=>slug(h));const idxName=headers.findIndex(h=>["field","field_name","field_label","name","dimension"].includes(h));const idxVal=headers.findIndex(h=>["value","field_value","val"].includes(h));const idxUnit=headers.findIndex(h=>["unit","units","field_unit"].includes(h));const idxType=headers.findIndex(h=>["type","field_type"].includes(h));let imported=0;if(idxName>=0&&idxVal>=0){rows.slice(1).forEach(r=>{const label=(r[idxName]||"").trim();if(!label)return;const key=aliasMap[slug(label)]||slug(label);setField(key,(r[idxVal]||"").trim(),label,(r[idxUnit]||"").trim(),(r[idxType]||"").trim()||undefined);imported++;});}else if(headers.some(h=>aliasMap[h]||h.includes("holeid"))){const holeIdx=headers.findIndex(h=>["holeid","hole_id","hole","id","name"].includes(h));const xIdx=headers.findIndex(h=>["x","easting","east"].includes(h));const yIdx=headers.findIndex(h=>["y","northing","north"].includes(h));const zIdx=headers.findIndex(h=>["z","rl","collar_rl","elevation","elev"].includes(h));const pts=[];rows.slice(1).forEach(r=>{const id=(r[holeIdx]||"").trim();const x=parseFloat(r[xIdx]),y=parseFloat(r[yIdx]),z=parseFloat(r[zIdx]);if(id&&!isNaN(x)&&!isNaN(y))pts.push({id,x,y,z:isNaN(z)?null:z});});applyHoleStats(pts,fileName,"CSV collar table");imported=pts.length;}else{headers.forEach((h,i)=>{if(aliasMap[h]&&rows[1]){setField(aliasMap[h],(rows[1][i]||"").trim(),null,defaultUnit(aliasMap[h]));imported++;}});}setField("import_source",fileName,"Import source","","text");renderDimensions();log("log-csv","Imported "+imported+" value(s).");toast("CSV imported");}
+function defaultUnit(key){return key.includes("_m")?"m":key.includes("_mm")?"mm":key.includes("holes")?"holes":key.includes("kg")?"kg":"";}
+function downloadCSVTemplate(){const rows=["field,value,unit,type","Blast name,,,text","Bench / location,,,text","Burden,,m,number","Spacing,,m,number","Hole depth,,m,number","Hole diameter,,mm,number","Number of holes,,holes,number","Stemming,,m,number","Subdrill,,m,number","Explosive mass,,kg,number"];downloadFile("project_parameters_template.csv",rows.join("\n"));}
+function readSPFFile(file){if(!file)return;resetLog("log-spf","Reading "+file.name+"...");const r=new FileReader();r.onload=e=>{extractZipEntry(e.target.result,"BlisData.Xml").then(xml=>importSPFXML(xml,file.name)).catch(err=>{log("log-spf","Error: "+err.message);toast("SPF/SP6 import failed","error");});};r.readAsArrayBuffer(file);}
+function extractZipEntry(buf,target){return new Promise((resolve,reject)=>{const view=new DataView(buf),bytes=new Uint8Array(buf);let eocd=-1;for(let i=buf.byteLength-22;i>=0;i--){if(view.getUint32(i,true)===0x06054b50){eocd=i;break;}}if(eocd<0){reject(new Error("Not a valid ZIP-style SPF/SP6 file"));return;}const cdOffset=view.getUint32(eocd+16,true),numEntries=view.getUint16(eocd+10,true);let pos=cdOffset;for(let i=0;i<numEntries;i++){if(view.getUint32(pos,true)!==0x02014b50){reject(new Error("Bad ZIP central directory"));return;}const compress=view.getUint16(pos+10,true),compSize=view.getUint32(pos+20,true),nameLen=view.getUint16(pos+28,true),extraLen=view.getUint16(pos+30,true),commentLen=view.getUint16(pos+32,true),localOff=view.getUint32(pos+42,true);const name=new TextDecoder().decode(bytes.slice(pos+46,pos+46+nameLen));if(name===target||name.endsWith("/"+target)){const lnl=view.getUint16(localOff+26,true),lel=view.getUint16(localOff+28,true),dataStart=localOff+30+lnl+lel,compressed=bytes.slice(dataStart,dataStart+compSize);if(compress===0){resolve(new TextDecoder("utf-8").decode(compressed));return;}if(compress===8){const ds=new DecompressionStream("deflate-raw"),w=ds.writable.getWriter(),rr=ds.readable.getReader(),chunks=[];function pump(){return rr.read().then(res=>{if(res.done){let total=0;chunks.forEach(c=>total+=c.length);const out=new Uint8Array(total);let off=0;chunks.forEach(c=>{out.set(c,off);off+=c.length;});resolve(new TextDecoder("utf-8").decode(out));}else{chunks.push(res.value);return pump();}});}w.write(compressed);w.close();pump().catch(reject);return;}reject(new Error("Unsupported compression type: "+compress));return;}pos+=46+nameLen+extraLen+commentLen;}reject(new Error(target+" not found"));});}
+function importSPFXML(xml,fileName){ensureBlastTemplate();xml=xml.replace(/\uFEFF/g,"").replace(/\s+xmlns[^=]*="[^"]*"/g,"").replace(/\s+xsi:[^=]+="[^"]*"/g,"");const doc=new DOMParser().parseFromString(xml,"text/xml");const holes=Array.from(doc.querySelectorAll("Hole"));const pts=[];let depths=[],diams=[];holes.forEach(h=>{const id=nodeText(h,"HoleId")||nodeText(h,"Name")||nodeText(h,"Id");const c=h.querySelector("DesignCoordinates")||h.querySelector("Coordinates")||h;const x=parseFloat(nodeText(c,"X")),y=parseFloat(nodeText(c,"Y")),z=parseFloat(nodeText(c,"Z"));if(id&&!isNaN(x)&&!isNaN(y))pts.push({id,x,y,z:isNaN(z)?null:z});const dep=numFirst(h,["HoleDepth","Depth","DesignDepth","Length","HoleLength","DesignedLength"]);if(dep)depths.push(dep);const dia=numFirst(h,["Diameter","HoleDiameter","DesignDiameter","DrillDiameter"]);if(dia)diams.push(dia);});applyHoleStats(pts,fileName,"SPF/SP6 BlisData.Xml");if(depths.length)setField("hole_depth_m",avg(depths).toFixed(2),"Hole depth","m","number");if(diams.length)setField("hole_diameter_mm",normaliseDiameter(avg(diams)).toFixed(0),"Hole diameter","mm","number");renderDimensions();log("log-spf","Imported "+pts.length+" collar holes from "+fileName+".");if(depths.length)log("log-spf","Average hole depth: "+avg(depths).toFixed(2)+" m");if(diams.length)log("log-spf","Average hole diameter: "+normaliseDiameter(avg(diams)).toFixed(0)+" mm");toast("SPF/SP6 imported");}
+function nodeText(parent,tag){const n=parent.querySelector(tag);return n?n.textContent.trim():"";}
+function numFirst(parent,tags){for(const t of tags){const v=parseFloat(nodeText(parent,t));if(!isNaN(v)&&v>0)return v;}return null;}
+function avg(a){return a.reduce((x,y)=>x+y,0)/a.length;}
+function normaliseDiameter(v){return v<5?v*1000:v;}
+function applyHoleStats(pts,fileName,sourceLabel){if(!pts.length){log(sourceLabel.includes("CSV")?"log-csv":"log-spf","No holes with usable coordinates found.");return;}setField("number_of_holes",pts.length,"Number of holes","holes","number");setField("import_source",fileName,"Import source","","text");const xs=pts.map(p=>p.x),ys=pts.map(p=>p.y),zs=pts.map(p=>p.z).filter(z=>z!=null&&!isNaN(z));setField("collar_min_x",Math.min(...xs).toFixed(2),"Collar min X","","number");setField("collar_max_x",Math.max(...xs).toFixed(2),"Collar max X","","number");setField("collar_min_y",Math.min(...ys).toFixed(2),"Collar min Y","","number");setField("collar_max_y",Math.max(...ys).toFixed(2),"Collar max Y","","number");if(zs.length)setField("avg_collar_rl",avg(zs).toFixed(2),"Average collar RL","m","number");const spacing=estimateSpacing(pts);if(spacing.burden)setField("burden_m",spacing.burden.toFixed(2),"Burden","m","number");if(spacing.spacing)setField("spacing_m",spacing.spacing.toFixed(2),"Spacing","m","number");const logId=sourceLabel.includes("CSV")?"log-csv":"log-spf";log(logId,sourceLabel+": "+pts.length+" holes");if(spacing.burden&&spacing.spacing)log(logId,"Estimated burden/spacing: "+spacing.burden.toFixed(2)+" m / "+spacing.spacing.toFixed(2)+" m");}
+function estimateSpacing(pts){if(pts.length<3)return{};const ns=[];pts.forEach((p,i)=>{const ds=pts.filter((_,j)=>j!==i).map(q=>Math.hypot(p.x-q.x,p.y-q.y)).filter(d=>d>0.05).sort((a,b)=>a-b);if(ds[0])ns.push(ds[0]);if(ds[1])ns.push(ds[1]);});if(ns.length<2)return{};ns.sort((a,b)=>a-b);const near=ns.slice(0,Math.max(1,Math.floor(ns.length*.45))),far=ns.slice(Math.floor(ns.length*.45),Math.max(Math.floor(ns.length*.75),Math.floor(ns.length*.45)+1));const b=median(near),s=median(far);return{burden:Math.min(b,s),spacing:Math.max(b,s)};}
+function median(a){const b=a.slice().sort((x,y)=>x-y);return b[Math.floor(b.length/2)];}
 boot();
 </script>
 </body>
