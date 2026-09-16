@@ -11,15 +11,26 @@
 <script src="js/supabaseClient.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/auth.js"></script>
+<style>
+  .tile-wrap{position:relative;}
+  .tile-menu-btn{position:absolute;top:10px;right:10px;background:#fff;border:1px solid var(--border);color:var(--muted);
+    width:30px;height:30px;border-radius:8px;font-size:16px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;box-shadow:none;}
+  .tile-menu-btn:hover{background:#f2f6f9;filter:none;}
+  .role-pill{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;
+    padding:2px 7px;border-radius:20px;background:#eef2f5;color:#5b7080;margin-left:6px;}
+  .role-pill.owner{background:#e0f3fb;color:var(--orica-cerulean-dark);}
+  .modal-back{position:fixed;inset:0;background:rgba(0,51,102,.35);z-index:150;display:flex;align-items:center;justify-content:center;padding:16px;}
+  .modal-card{background:#fff;border-radius:var(--radius);box-shadow:0 12px 40px rgba(0,0,0,.28);max-width:440px;width:100%;padding:18px;}
+  .member-line{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);}
+</style>
 </head>
 <body>
 
-<!-- Top bar is rendered by JS: full nav when logged in, simple brand bar when logged out -->
 <div id="topbar-container"></div>
 
 <div class="wrap" style="max-width:480px;">
 
-  <!-- ============ BRANDED HERO (login screen only) ============ -->
+  <!-- Branded hero (login only) -->
   <div class="login-hero" id="loginHero">
     <div class="hero-inner">
       <span class="brand-logo"><img src="img/orica-logo.png" alt="Orica"></span>
@@ -28,47 +39,27 @@
     </div>
   </div>
 
-  <!-- ============ LOGIN / SIGNUP CARD ============ -->
+  <!-- Login / signup -->
   <div id="authCard" class="card">
     <div class="tabs">
       <div class="tab active" id="tabSignIn" onclick="switchTab('signin')">Sign in</div>
       <div class="tab" id="tabSignUp" onclick="switchTab('signup')">Create account</div>
     </div>
-
     <div id="errorBox" class="error-box hidden"></div>
-
-    <!-- Sign in -->
     <div id="signinForm">
-      <div class="field">
-        <label>Email</label>
-        <input type="email" id="siEmail" placeholder="you@orica.com">
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input type="password" id="siPassword" placeholder="••••••••">
-      </div>
+      <div class="field"><label>Email</label><input type="email" id="siEmail" placeholder="you@orica.com"></div>
+      <div class="field"><label>Password</label><input type="password" id="siPassword" placeholder="••••••••"></div>
       <button class="block" onclick="doSignIn()">Sign in</button>
     </div>
-
-    <!-- Sign up -->
     <div id="signupForm" class="hidden">
-      <div class="field">
-        <label>Display name (shown to teammates)</label>
-        <input type="text" id="suName" placeholder="e.g. Daniel G">
-      </div>
-      <div class="field">
-        <label>Email</label>
-        <input type="email" id="suEmail" placeholder="you@orica.com">
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input type="password" id="suPassword" placeholder="min 6 characters">
-      </div>
+      <div class="field"><label>Display name (shown to teammates)</label><input type="text" id="suName" placeholder="e.g. Daniel G"></div>
+      <div class="field"><label>Email</label><input type="email" id="suEmail" placeholder="you@orica.com"></div>
+      <div class="field"><label>Password</label><input type="password" id="suPassword" placeholder="min 6 characters"></div>
       <button class="block" onclick="doSignUp()">Create account</button>
     </div>
   </div>
 
-  <!-- ============ PROJECT LIST (shown once logged in) ============ -->
+  <!-- Project list -->
   <div id="projectsCard" class="card hidden">
     <div class="row between">
       <h2 class="mb0">Your projects</h2>
@@ -78,142 +69,180 @@
     <div id="projectList" class="grid cols-2 mt16"></div>
   </div>
 
-  <!-- ============ NEW PROJECT MODAL ============ -->
+  <!-- New project -->
   <div id="newProjectCard" class="card hidden">
     <h2>Create a new project</h2>
-    <div class="field">
-      <label>Project name</label>
-      <input type="text" id="npName" placeholder="e.g. Moolarben Blast Crew — Loading Study">
-    </div>
-    <div class="field">
-      <label>Description (optional)</label>
-      <textarea id="npDesc" placeholder="Purpose, site, scope..."></textarea>
-    </div>
-    <div class="row">
-      <button onclick="createProject()">Create</button>
-      <button class="secondary" onclick="closeNewProjectModal()">Cancel</button>
-    </div>
+    <div class="field"><label>Project name</label><input type="text" id="npName" placeholder="e.g. Moolarben Blast Crew — Loading Study"></div>
+    <div class="field"><label>Description (optional)</label><textarea id="npDesc" placeholder="Purpose, site, scope..."></textarea></div>
+    <div class="row"><button onclick="createProject()">Create</button><button class="secondary" onclick="closeNewProjectModal()">Cancel</button></div>
   </div>
 
 </div>
 
+<!-- Manage-project modal -->
+<div id="manageBack" class="modal-back hidden">
+  <div class="modal-card">
+    <div class="row between">
+      <h2 class="mb0" id="mgName">Project</h2>
+      <button class="ghost small" onclick="closeManage()">✕</button>
+    </div>
+    <p class="muted" id="mgRole" style="font-size:12px;margin:4px 0 12px;"></p>
+    <div id="mgBody"></div>
+  </div>
+</div>
+
 <script>
-/** Simple brand-only bar for the logged-out login screen. */
-function renderSimpleTopbar() {
+let CURRENT_USER_ID = null;
+let MANAGE = null; // { project, members, myRole }
+
+function renderSimpleTopbar(){
   document.getElementById("topbar-container").innerHTML =
-    '<div class="topbar">' +
-      '<div class="brand">' +
-        '<span class="brand-logo"><img src="img/orica-logo.png" alt="Orica"></span>' +
-        '<span class="product">Time &amp; Motion Tracker</span>' +
-      '</div>' +
-    '</div>' +
-    '<div class="brand-accent"></div>';
+    '<div class="topbar"><div class="brand"><span class="brand-logo"><img src="img/orica-logo.png" alt="Orica"></span><span class="product">Time &amp; Motion Tracker</span></div></div><div class="brand-accent"></div>';
 }
-
-function switchTab(tab) {
-  document.getElementById("tabSignIn").classList.toggle("active", tab === "signin");
-  document.getElementById("tabSignUp").classList.toggle("active", tab === "signup");
-  document.getElementById("signinForm").classList.toggle("hidden", tab !== "signin");
-  document.getElementById("signupForm").classList.toggle("hidden", tab !== "signup");
+function switchTab(tab){
+  document.getElementById("tabSignIn").classList.toggle("active",tab==="signin");
+  document.getElementById("tabSignUp").classList.toggle("active",tab==="signup");
+  document.getElementById("signinForm").classList.toggle("hidden",tab!=="signin");
+  document.getElementById("signupForm").classList.toggle("hidden",tab!=="signup");
   hideError();
 }
-function showError(msg) {
-  const box = document.getElementById("errorBox");
-  box.textContent = msg;
-  box.classList.remove("hidden");
-}
-function hideError() {
-  document.getElementById("errorBox").classList.add("hidden");
-}
+function showError(m){const b=document.getElementById("errorBox");b.textContent=m;b.classList.remove("hidden");}
+function hideError(){document.getElementById("errorBox").classList.add("hidden");}
 
-async function doSignIn() {
+async function doSignIn(){
   hideError();
-  const email = document.getElementById("siEmail").value.trim();
-  const password = document.getElementById("siPassword").value;
-  if (!email || !password) return showError("Enter your email and password.");
-  const { error } = await signIn(email, password);
-  if (error) return showError(error.message);
+  const email=document.getElementById("siEmail").value.trim(), password=document.getElementById("siPassword").value;
+  if(!email||!password)return showError("Enter your email and password.");
+  const {error}=await signIn(email,password); if(error)return showError(error.message);
   await init();
 }
-
-async function doSignUp() {
+async function doSignUp(){
   hideError();
-  const name = document.getElementById("suName").value.trim();
-  const email = document.getElementById("suEmail").value.trim();
-  const password = document.getElementById("suPassword").value;
-  if (!name || !email || !password) return showError("Fill in all fields.");
-  if (password.length < 6) return showError("Password must be at least 6 characters.");
-  const { error } = await signUp(email, password, name);
-  if (error) return showError(error.message);
+  const name=document.getElementById("suName").value.trim(), email=document.getElementById("suEmail").value.trim(), password=document.getElementById("suPassword").value;
+  if(!name||!email||!password)return showError("Fill in all fields.");
+  if(password.length<6)return showError("Password must be at least 6 characters.");
+  const {error}=await signUp(email,password,name); if(error)return showError(error.message);
   toast("Account created! Signing you in...");
-  const { error: siErr } = await signIn(email, password);
-  if (siErr) {
-    showError("Account created — please check your email to confirm, then sign in.");
-    switchTab("signin");
-    return;
-  }
+  const {error:se}=await signIn(email,password);
+  if(se){showError("Account created — check your email to confirm, then sign in.");switchTab("signin");return;}
   await init();
 }
 
-function openNewProjectModal() {
-  document.getElementById("newProjectCard").classList.remove("hidden");
-}
-function closeNewProjectModal() {
-  document.getElementById("newProjectCard").classList.add("hidden");
-}
-
-async function createProject() {
-  const name = document.getElementById("npName").value.trim();
-  const desc = document.getElementById("npDesc").value.trim();
-  if (!name) return toast("Enter a project name", "error");
-  const user = await getCurrentUser();
-  const { data, error } = await sb
-    .from("projects")
-    .insert({ name, description: desc, owner_id: user.id })
-    .select()
-    .single();
-  if (error) return toast(error.message, "error");
-  toast("Project created!");
-  setLastProject(data.id);
-  window.location.href = `project.html?project=${data.id}`;
+function openNewProjectModal(){document.getElementById("newProjectCard").classList.remove("hidden");}
+function closeNewProjectModal(){document.getElementById("newProjectCard").classList.add("hidden");}
+async function createProject(){
+  const name=document.getElementById("npName").value.trim(), desc=document.getElementById("npDesc").value.trim();
+  if(!name)return toast("Enter a project name","error");
+  const user=await getCurrentUser();
+  const {data,error}=await sb.from("projects").insert({name,description:desc,owner_id:user.id}).select().single();
+  if(error)return toast(error.message,"error");
+  toast("Project created!"); setLastProject(data.id);
+  window.location.href=`project.html?project=${data.id}`;
 }
 
-async function loadProjects() {
-  const { data, error } = await sb
-    .from("projects")
-    .select("*, project_members!inner(user_id)")
-    .order("created_at", { ascending: false });
-  const list = document.getElementById("projectList");
-  if (error) {
-    list.innerHTML = `<p class="error-box">${error.message}</p>`;
-    return;
+async function loadProjects(){
+  const {data,error}=await sb.from("projects").select("*, project_members!inner(user_id)").order("created_at",{ascending:false});
+  const list=document.getElementById("projectList");
+  if(error){list.innerHTML=`<p class="error-box">${error.message}</p>`;return;}
+  if(!data.length){list.innerHTML=`<p class="muted">No projects yet — create your first one above.</p>`;return;}
+  list.innerHTML=data.map(p=>{
+    const isOwner=p.owner_id===CURRENT_USER_ID;
+    return `<div class="tile-wrap">
+      <div class="project-tile" onclick="setLastProject('${p.id}');window.location.href='project.html?project=${p.id}'">
+        <h3>${escapeHtml(p.name)}${isOwner?'<span class="role-pill owner">owner</span>':'<span class="role-pill">member</span>'}</h3>
+        <p>${escapeHtml(p.description||"No description")}</p>
+        <p class="mt8">Created ${fmtDate(p.created_at)}</p>
+      </div>
+      <button class="tile-menu-btn" title="Manage project" onclick='event.stopPropagation();openManage(${JSON.stringify(p).replace(/'/g,"&#39;")})'>⋯</button>
+    </div>`;
+  }).join("");
+}
+
+// ---------- Manage modal ----------
+async function openManage(project){
+  const isOwner = project.owner_id===CURRENT_USER_ID;
+  // pull members with names
+  const {data:members}=await sb.from("project_members").select("user_id,role,profiles(display_name,email)").eq("project_id",project.id);
+  MANAGE={project,members:members||[],isOwner};
+  document.getElementById("mgName").textContent=project.name;
+  document.getElementById("mgRole").textContent=`You are ${isOwner?"the owner":"a member"} · ${(members||[]).length} member${(members||[]).length===1?"":"s"}`;
+  renderManageBody();
+  document.getElementById("manageBack").classList.remove("hidden");
+}
+function closeManage(){document.getElementById("manageBack").classList.add("hidden");MANAGE=null;}
+
+function renderManageBody(){
+  const {project,members,isOwner}=MANAGE;
+  const others=members.filter(m=>m.user_id!==CURRENT_USER_ID);
+  let html="";
+
+  if(isOwner){
+    // Transfer ownership
+    html+=`<h3 style="font-size:13px;">Transfer ownership</h3>`;
+    if(!others.length){
+      html+=`<p class="muted" style="font-size:12px;">Add another member first (on the Project page) before you can transfer ownership.</p>`;
+    }else{
+      html+=others.map(m=>`
+        <div class="member-line">
+          <span>${escapeHtml(m.profiles?.display_name||m.profiles?.email||"Member")} <span class="muted">(${m.role})</span></span>
+          <button class="small secondary" onclick="transferOwnership('${m.user_id}','${escapeHtml(m.profiles?.display_name||"this member")}')">Make owner</button>
+        </div>`).join("");
+    }
+    html+=`<div class="mt16"><h3 style="font-size:13px;color:var(--danger);">Danger zone</h3>
+      <button class="danger block" onclick="deleteProject()">🗑 Delete project permanently</button>
+      <p class="muted" style="font-size:12px;margin-top:6px;">Removes the project and all its buckets, activities, runs and recorded entries. Cannot be undone.</p></div>`;
+  }else{
+    html+=`<h3 style="font-size:13px;">Leave project</h3>
+      <p class="muted" style="font-size:12px;">You'll lose access to this project. The owner can re-add you later. Recorded data stays with the project.</p>
+      <button class="warn block mt8" onclick="leaveProject()">🚪 Leave this project</button>`;
   }
-  if (!data.length) {
-    list.innerHTML = `<p class="muted">No projects yet — create your first one above.</p>`;
-    return;
-  }
-  list.innerHTML = data
-    .map(
-      (p) => `
-    <div class="project-tile" onclick="setLastProject('${p.id}');window.location.href='project.html?project=${p.id}'">
-      <h3>${escapeHtml(p.name)}</h3>
-      <p>${escapeHtml(p.description || "No description")}</p>
-      <p class="mt8">Created ${fmtDate(p.created_at)}</p>
-    </div>`
-    )
-    .join("");
+  document.getElementById("mgBody").innerHTML=html;
 }
 
-async function init() {
-  const user = await getCurrentUser();
-  if (user) {
-    const { data: profile } = await sb.from("profiles").select("display_name").eq("id", user.id).single();
-    await renderTopbar("index", { display_name: profile?.display_name || user.email });
+async function transferOwnership(newUserId,newName){
+  if(!confirm(`Make ${newName} the owner? You'll become an admin and can no longer delete the project.`))return;
+  const pid=MANAGE.project.id;
+  // 1) point the project at the new owner
+  const {error:e1}=await sb.from("projects").update({owner_id:newUserId}).eq("id",pid);
+  if(e1)return toast(e1.message,"error");
+  // 2) promote new owner, demote self
+  await sb.from("project_members").update({role:"owner"}).eq("project_id",pid).eq("user_id",newUserId);
+  await sb.from("project_members").update({role:"admin"}).eq("project_id",pid).eq("user_id",CURRENT_USER_ID);
+  toast(`${newName} is now the owner`);
+  closeManage(); loadProjects();
+}
+
+async function leaveProject(){
+  const pid=MANAGE.project.id;
+  if(!confirm(`Leave "${MANAGE.project.name}"? You'll lose access until an owner re-adds you.`))return;
+  const {error}=await sb.from("project_members").delete().eq("project_id",pid).eq("user_id",CURRENT_USER_ID);
+  if(error)return toast(error.message,"error");
+  toast("You left the project");
+  closeManage(); loadProjects();
+}
+
+async function deleteProject(){
+  const p=MANAGE.project;
+  const first=prompt(`This permanently deletes "${p.name}" and ALL its data (runs, entries, activities).\n\nType the project name to confirm:`);
+  if(first===null)return;
+  if(first.trim()!==p.name){return toast("Name didn't match — nothing deleted.","error");}
+  const {error}=await sb.from("projects").delete().eq("id",p.id);
+  if(error)return toast(error.message,"error");
+  toast(`"${p.name}" deleted`);
+  closeManage(); loadProjects();
+}
+
+async function init(){
+  const user=await getCurrentUser();
+  if(user){
+    CURRENT_USER_ID=user.id;
+    const {data:profile}=await sb.from("profiles").select("display_name").eq("id",user.id).single();
+    await renderTopbar("index",{display_name:profile?.display_name||user.email});
     document.getElementById("loginHero").classList.add("hidden");
     document.getElementById("authCard").classList.add("hidden");
     document.getElementById("projectsCard").classList.remove("hidden");
     await loadProjects();
-  } else {
+  }else{
     renderSimpleTopbar();
     document.getElementById("loginHero").classList.remove("hidden");
     document.getElementById("authCard").classList.remove("hidden");
